@@ -59,6 +59,7 @@ public final class IAirportMonitor {
     private var pendingCacheRoam: AssociationInfo?
     private var unresolvedCacheRoamFrom: String?
     private var firstWithheldAt: Date?
+    private var withheldRecheckScheduled = false
 
     public init(options: RunOptions, executablePath: String?, locationGate: LocationGateResult) {
         self.options = options
@@ -232,8 +233,15 @@ public final class IAirportMonitor {
                 firstWithheldAt = nil
                 downgradeToCacheSource()
                 sample = linkReader.read(metrics: metrics, ipState: ip, throughput: throughput, oui: oui, bssidSource: bssidSource)
-            } else if firstWithheldAt == nil {
-                firstWithheldAt = sample.timestamp
+            } else {
+                if firstWithheldAt == nil {
+                    firstWithheldAt = sample.timestamp
+                }
+                // The radio is still associated; only the BSSID is hidden. Do
+                // not commit it as a disconnect. Look again once the 500 ms
+                // window has passed, then fall back to the scan cache.
+                scheduleWithheldRecheck()
+                return
             }
         } else {
             firstWithheldAt = nil
@@ -273,6 +281,16 @@ public final class IAirportMonitor {
         flushPendingRoamIP(now: sample.timestamp)
         flushTransitionIP(now: sample.timestamp)
         flushDHCP(now: sample.timestamp)
+    }
+
+    private func scheduleWithheldRecheck() {
+        guard !withheldRecheckScheduled else { return }
+        withheldRecheckScheduled = true
+        queue.asyncAfter(deadline: .now() + .milliseconds(600)) { [weak self] in
+            guard let self else { return }
+            self.withheldRecheckScheduled = false
+            self.sampleAndCommit(reason: "withheld")
+        }
     }
 
     private func recheckLiveSourceIfNeeded() {
