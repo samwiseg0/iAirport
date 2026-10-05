@@ -88,12 +88,15 @@ public struct LocationGateResult: Equatable {
     public var cacheReason: LocationCacheReason?
     public var canRecheck: Bool
     public var protectedFolder: String?
+    /// The Location prompt was requested and has no answer yet.
+    public var promptPending: Bool
 
-    public init(source: BSSIDSource, cacheReason: LocationCacheReason? = nil, canRecheck: Bool = false, protectedFolder: String? = nil) {
+    public init(source: BSSIDSource, cacheReason: LocationCacheReason? = nil, canRecheck: Bool = false, protectedFolder: String? = nil, promptPending: Bool = false) {
         self.source = source
         self.cacheReason = cacheReason
         self.canRecheck = canRecheck
         self.protectedFolder = protectedFolder
+        self.promptPending = promptPending
     }
 }
 
@@ -106,8 +109,7 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
     private var completed = false
     private var handshakeTried = false
     private var promptRequested = false
-    private var promptDeadline: Date?
-
+    private var promptPollScheduled = false
     public init(interfaceName: String, executablePath: String?, jsonMode: Bool = false) {
         self.interfaceName = interfaceName
         self.executablePath = executablePath
@@ -122,14 +124,22 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        evaluate()
+        if completed {
+            handleLateAuthorization()
+        } else {
+            evaluate()
+        }
     }
 
     // Called by the monitor when live mode loses the BSSID mid-run.
     // Returns true when a prompt was requested.
     public func requestPromptAgain() -> Bool {
         guard authState(manager.authorizationStatus) == .notDetermined else { return false }
-        DispatchQueue.main.async { self.manager.requestWhenInUseAuthorization() }
+        DispatchQueue.main.async {
+            self.handshakeTried = false
+            self.manager.requestWhenInUseAuthorization()
+            self.schedulePromptPoll()
+        }
         return true
     }
 
@@ -148,9 +158,8 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
         case .requestPrompt:
             guard !promptRequested else { return }
             promptRequested = true
-            promptDeadline = Date().addingTimeInterval(60)
             // JSON consumers read stdout line by line, so the prompt note goes to stderr there.
-            let note = "Waiting for the Location prompt. Click Allow so iairport can read the SSID and BSSID."
+            let note = "Waiting for the Location prompt. Click Allow so iairport can read the SSID and BSSID. Running in cache mode until then."
             if jsonMode {
                 FileHandle.standardError.write(Data((note + "\n").utf8))
             } else {
@@ -158,10 +167,9 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
             }
             manager.requestWhenInUseAuthorization()
             schedulePromptPoll()
-            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(60)) { [weak self] in
-                guard let self, !self.completed else { return }
-                self.finish(LocationGateResult(source: .cache, cacheReason: .noGrant, canRecheck: true, protectedFolder: self.protectedFolderIfNeeded(bundle: self.appBundle(), authorization: self.authState(self.manager.authorizationStatus))))
-            }
+            // Do not block on the dialog. The monitor starts in cache mode and
+            // switches to live once the grant lands and a BSSID is readable.
+            finish(LocationGateResult(source: .cache, cacheReason: .noGrant, canRecheck: true, promptPending: true))
         case .handshake:
             startHandshake()
         }
@@ -191,29 +199,30 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
     }
 
     private func schedulePromptPoll() {
+        guard !promptPollScheduled else { return }
+        promptPollScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(1)) { [weak self] in
+            self?.promptPollScheduled = false
             self?.pollPrompt()
         }
     }
 
+    // Runs after the monitor has started. Keeps watching the authorization
+    // until the user answers, and runs the handshake once Allow lands.
     private func pollPrompt() {
-        guard !completed else { return }
         switch authState(manager.authorizationStatus) {
         case .authorized:
-            if liveBSSID() != nil {
-                finish(LocationGateResult(source: .live))
-            } else {
-                startHandshake()
-            }
+            handleLateAuthorization()
         case .denied, .restricted, .unknown:
-            finish(LocationGateResult(source: .cache, cacheReason: .noGrant, canRecheck: true))
+            break
         case .notDetermined:
-            if let promptDeadline, Date() >= promptDeadline {
-                finish(LocationGateResult(source: .cache, cacheReason: .noGrant, canRecheck: true))
-            } else {
-                schedulePromptPoll()
-            }
+            schedulePromptPoll()
         }
+    }
+
+    private func handleLateAuthorization() {
+        guard authState(manager.authorizationStatus) == .authorized, liveBSSID() == nil else { return }
+        startHandshake()
     }
 
     private func retryAfterHandshake(secondRetry: Bool) {

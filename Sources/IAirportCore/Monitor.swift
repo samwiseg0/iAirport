@@ -16,6 +16,7 @@ public final class IAirportMonitor {
     private var cacheReason: LocationCacheReason?
     private var canRecheckLiveSource: Bool
     private let protectedFolder: String?
+    private let promptPending: Bool
     private var cacheWarningPrinted = false
     private var liveSourceLinePrinted = false
     public var onLiveSourceLost: (() -> Bool)?
@@ -67,6 +68,7 @@ public final class IAirportMonitor {
         cacheReason = locationGate.cacheReason
         canRecheckLiveSource = locationGate.canRecheck
         protectedFolder = locationGate.protectedFolder
+        promptPending = locationGate.promptPending
         let loaded = OUI.load(explicitPath: options.ouiPath, executablePath: executablePath)
         oui = loaded.0
         ouiWarning = loaded.1
@@ -124,6 +126,8 @@ public final class IAirportMonitor {
         case .noGrant:
             if let protectedFolder {
                 renderer.event(line: "Location is granted, but the app bundle is under \(protectedFolder), which macOS protects. locationd cannot identify it there. Run `sudo make install` and use /usr/local/bin/iairport.", color: .yellow)
+            } else if promptPending {
+                renderer.event(line: "BSSID comes from the scan cache until Location is allowed. If no dialog appeared, turn on iairport in System Settings > Privacy & Security > Location Services. iairport switches to live without a restart.", color: .yellow)
             } else {
                 renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport.", color: .yellow)
             }

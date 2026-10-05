@@ -8,7 +8,7 @@ The old tool read `airport -I` and tailed `/var/log/wifi.log`. The `airport` bin
 
 ## Location permission
 
-macOS treats Wi-Fi SSID and BSSID as location data. iairport ships as `iairport.app`, and the command is a symlink to its binary. At startup, iairport resolves the symlink and re-runs the real app path so macOS sees the bundle. On first run, click Allow at the Location prompt. iairport then runs `open -g -j` once as a handshake and continues in the same process. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`. Root has no Location grant, so `sudo iairport` re-runs itself as the invoking user.
+macOS treats Wi-Fi SSID and BSSID as location data. iairport ships as `iairport.app`, and the command is a symlink to its binary. At startup, iairport resolves the symlink and re-runs the real app path so macOS sees the bundle. On first run, iairport asks for Location and starts the monitor in cache mode right away. It does not wait for the dialog. When you click Allow, iairport runs `open -g -j` once as a handshake, and the next sample switches to live in the same process. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`. Root has no Location grant, so `sudo iairport` re-runs itself as the invoking user.
 
 ## CoreWLAN
 
