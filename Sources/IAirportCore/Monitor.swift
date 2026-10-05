@@ -111,7 +111,7 @@ public final class IAirportMonitor {
 
     private func printHeader() {
         guard !options.json else { return }
-        renderer.event(line: "iairport v2.1.0 (Swift rewrite of iAirport by Guillaume Germain)")
+        renderer.event(line: "iairport v2.1.1 (Swift rewrite of iAirport by Guillaume Germain)")
         renderer.event(line: macOSLine())
         renderer.event(line: "interface \(interfaceName)")
         if let ouiWarning { renderer.event(line: "warning: \(ouiWarning)", color: .yellow) }
