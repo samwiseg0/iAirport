@@ -28,7 +28,7 @@ iairport reads the `AF_LINK` record for the Wi-Fi interface with `getifaddrs`. I
 
 ## wdutil through sudo
 
-`wdutil info` adds fields that CoreWLAN does not always expose. iairport reads MCS, NSS, guard interval, CCA, PHY, and security there. `wdutil` needs root, and root has no Location grant. `sudo iairport` keeps root as a helper for `wdutil info` and `wdutil log`. It runs the monitor as the invoking user. The monitor sends `info` or `log` requests over a socket. Plain `iairport` after `sudo -v` calls `sudo -n wdutil info` directly. Without either path, those fields stay blank.
+`wdutil info` adds fields that CoreWLAN does not always expose. iairport reads MCS, NSS, guard interval, CCA, PHY, and security there. `wdutil` needs root, and root has no Location grant. `sudo iairport` keeps root as a helper for `wdutil info` and `wdutil log`. It runs the monitor as the invoking user. The monitor sends `info` or `log` requests over a socket. Plain `iairport` after `sudo -v` calls `sudo -n wdutil info` directly. Without either path, those fields stay blank. The `sudo -n` probe runs off the state queue with stdin from `/dev/null` and a 3-second timeout. It is skipped when `/etc/sudo.conf` loads a plugin that is not `sudoers_*`, because such plugins can ignore `-n` and prompt.
 
 The split exists because sudo 1.9.14 and later run each command in a new pty and tie the sudo ticket to the tty. A user process started by root cannot reuse the ticket.
 

@@ -311,6 +311,50 @@ final class UtilityTests: XCTestCase {
     }
 }
 
+final class SudoProbeTests: XCTestCase {
+    func testStockSudoConfIsStandard() {
+        let conf = """
+        # sudo.conf
+        #Plugin sudoers_policy sudoers.so
+        Plugin sudoers_policy sudoers.so
+        Plugin sudoers_io sudoers.so
+        Path askpass /usr/X11R6/bin/ssh-askpass
+        """
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: conf), [])
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: ""), [])
+    }
+
+    func testDefendpointPluginIsThirdParty() {
+        let conf = "Plugin avecto_policy /usr/local/libexec/Avecto/Defendpoint/1.0/sudo/sudoers.so\n"
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: conf), ["avecto_policy"])
+    }
+
+    func testMissingSudoConfIsStandard() {
+        XCTAssertTrue(SudoConfig.usesStandardPolicy(path: "/nonexistent/sudo.conf"))
+    }
+
+    func testBoundedProcessKillsChildAfterTimeout() {
+        let start = Date()
+        let result = BoundedProcess.run(executable: "/bin/sleep", arguments: ["30"], timeout: 0.3)
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testBoundedProcessReturnsOutputAndStatus() {
+        let result = BoundedProcess.run(executable: "/bin/sh", arguments: ["-c", "echo hi; exit 3"], timeout: 5)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.status, 3)
+        XCTAssertEqual(result.output.flatMap { String(data: $0, encoding: .utf8) }, "hi\n")
+    }
+
+    func testBoundedProcessStdinIsNull() {
+        let result = BoundedProcess.run(executable: "/bin/cat", arguments: [], timeout: 5)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.status, 0)
+    }
+
+}
+
 final class RendererTests: XCTestCase {
     func testStatusLineClipsToTerminalWidth() {
         let line = String(repeating: "x", count: 100)

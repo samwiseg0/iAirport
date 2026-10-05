@@ -83,6 +83,12 @@ case .success(let options):
         monitor.onLiveSourceLost = { gate.requestPromptAgain() }
         activeMonitor = monitor
         SignalInstaller.install {
+            // First signal: clean shutdown on the state queue. Second signal:
+            // the queue is stuck, so kill children and leave right away.
+            if SignalInstaller.recordSignal() > 1 {
+                WdutilInfo.terminateChildren()
+                _exit(130)
+            }
             monitor.requestShutdown()
         }
         monitor.start()

@@ -130,11 +130,30 @@ public final class IAirportMonitor {
         }
     }
 
+    // The probe can run `sudo -n`, so keep it off the state queue. A slow or
+    // prompting sudo must not block sampling or Ctrl-C.
     private func configureWdutilPrivilege() {
-        wdutilPrivilege = WdutilInfo.effectivePrivilege()
-        if options.verbose {
-            renderer.event(line: wdutilPrivilege.description, color: .dim)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let privilege = WdutilInfo.effectivePrivilege()
+            guard let self else { return }
+            self.queue.async {
+                guard !self.shuttingDown else { return }
+                self.wdutilPrivilege = privilege
+                if self.options.verbose {
+                    self.renderer.event(line: privilege.description, color: .dim)
+                }
+                self.startWdutilTimer()
+            }
         }
+    }
+
+    private func startWdutilTimer() {
+        guard wdutilPrivilege != .unavailable, wdutilTimer == nil else { return }
+        let wd = DispatchSource.makeTimerSource(queue: queue)
+        wd.schedule(deadline: .now(), repeating: .seconds(5))
+        wd.setEventHandler { [weak self] in self?.pollWdutil() }
+        wd.resume()
+        wdutilTimer = wd
     }
 
     private func setupWatchers() {
@@ -155,13 +174,6 @@ public final class IAirportMonitor {
         timer.setEventHandler { [weak self] in self?.sampleAndCommit(reason: "poll") }
         timer.resume()
         self.timer = timer
-        if wdutilPrivilege != .unavailable {
-            let wd = DispatchSource.makeTimerSource(queue: queue)
-            wd.schedule(deadline: .now(), repeating: .seconds(5))
-            wd.setEventHandler { [weak self] in self?.pollWdutil() }
-            wd.resume()
-            wdutilTimer = wd
-        }
     }
 
     private func handleStoreKeys(_ keys: [String]) {
@@ -633,6 +645,7 @@ public final class IAirportMonitor {
         shuttingDown = true
         timer?.cancel()
         wdutilTimer?.cancel()
+        WdutilInfo.terminateChildren()
         coreWLANBridge?.stop()
         dynamicStore?.stop()
         logTail?.stop()
@@ -734,6 +747,16 @@ private struct DriverSignal {
 
 public enum SignalInstaller {
     private static var sources: [DispatchSourceSignal] = []
+    private static let countLock = NSLock()
+    private static var count = 0
+
+    /// Counts delivered shutdown signals and returns the new total.
+    public static func recordSignal() -> Int {
+        countLock.lock()
+        defer { countLock.unlock() }
+        count += 1
+        return count
+    }
 
     public static func install(on queue: DispatchQueue = DispatchQueue.global(), handler: @escaping () -> Void) {
         signal(SIGPIPE, SIG_IGN)
