@@ -31,7 +31,7 @@ The tests cover pure logic in `IAirportCore`. They do not need root. They should
 - `uninstall` removes the installed app bundle, symlink, and OUI file.
 - `clean` removes build output.
 
-`make install` uses `PREFIX ?= /usr/local`. It expects `build/iairport.app` to exist, so run `make` first. It writes the app to `/Applications/iairport.app` (`APPINSTALLDIR`) and removes an older `/usr/local/libexec/iairport.app`. Launch Services marks bundles outside `/Applications` launch-disabled on some Macs; locationd then fails to verify the app and clears its Location grant. It symlinks `/usr/local/bin/iairport` to the app binary. It also writes `/usr/local/share/iairport/oui.txt`. Run `sudo make install` after each build when you need to test live mode. A bundle run from a repo clone under Documents, Desktop, or Downloads stays in cache mode.
+`make install` uses `PREFIX ?= /usr/local`. It expects `build/iairport.app` to exist, so run `make` first. It copies the app to `/usr/local/libexec/iairport.app` (`APPINSTALLDIR`), symlinks `/usr/local/bin/iairport` to the app binary, and writes `/usr/local/share/iairport/oui.txt`. It then removes an `iairport.app` left at the other install location, `/Applications` or `libexec`, so one bundle with this identifier stays installed. Launch Services marks bundles outside `/Applications` launch-disabled on some managed Macs; locationd then fails to verify the app and clears its Location grant. `sudo make install APPINSTALLDIR=/Applications` is the fix there. Run `sudo make install` after each build when you need to test live mode. A bundle run from a repo clone under Documents, Desktop, or Downloads stays in cache mode.
 
 ## OUI refresh
 

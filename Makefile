@@ -2,10 +2,14 @@ PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 LIBEXECDIR ?= $(PREFIX)/libexec
 DATADIR ?= $(PREFIX)/share/iairport
-# Launch Services marks app bundles outside /Applications launch-disabled on
-# some Macs. locationd then cannot verify the app and clears its Location
-# grant, so install the bundle where Launch Services treats it as an app.
-APPINSTALLDIR ?= /Applications
+# Where the app bundle goes. Some managed Macs mark bundles outside
+# /Applications launch-disabled in Launch Services, and locationd then drops
+# the Location grant. Pass APPINSTALLDIR=/Applications on those Macs.
+APPINSTALLDIR ?= $(LIBEXECDIR)
+# Trailing slashes would break the same-directory check below.
+override APPINSTALLDIR := $(patsubst %/,%,$(APPINSTALLDIR))
+override LIBEXECDIR := $(patsubst %/,%,$(LIBEXECDIR))
+APPLICATIONSDIR := /Applications
 CODESIGN_IDENTITY ?= -
 SWIFT_BUILD_FLAGS ?=
 APPDIR := build/iairport.app
@@ -37,18 +41,24 @@ install:
 	@test -d "$(APPDIR)" || { echo "error: $(APPDIR) not found. Run 'make' first, then 'sudo make install'." >&2; exit 1; }
 	@stale=$$(find Sources Resources Package.swift oui.txt -newer "$(APPDIR)/Contents/MacOS/iairport" -type f 2>/dev/null | head -1); \
 	if [ -n "$$stale" ]; then echo "error: $(APPDIR) is older than $$stale. Run 'make' first, then 'sudo make install'." >&2; exit 1; fi
-	install -d "$(BINDIR)" "$(APPINSTALLDIR)" "$(DATADIR)"
+	install -d "$(BINDIR)" "$(DATADIR)"
+	@# install -d resets the mode of an existing folder. /Applications is not ours.
+	@test -d "$(APPINSTALLDIR)" || install -d "$(APPINSTALLDIR)"
 	rm -rf "$(APPINSTALLDIR)/iairport.app"
 	cp -R "$(APPDIR)" "$(APPINSTALLDIR)/iairport.app"
 	ln -sfn "$(APPINSTALLDIR)/iairport.app/Contents/MacOS/iairport" "$(BINDIR)/iairport"
 	install -m 0644 oui.txt "$(DATADIR)/oui.txt"
-	@# Older installs put the bundle in $(LIBEXECDIR). Remove it so only one
-	@# bundle with this identifier stays installed.
-	rm -rf "$(LIBEXECDIR)/iairport.app"
+	@# One bundle with this identifier at a time. Drop copies at the other
+	@# install locations this Makefile has used.
+	@for dir in "$(LIBEXECDIR)" "$(APPLICATIONSDIR)"; do \
+	  if [ "$$dir" != "$(APPINSTALLDIR)" ] && [ -d "$$dir/iairport.app" ]; then \
+	    echo "rm -rf $$dir/iairport.app"; rm -rf "$$dir/iairport.app"; \
+	  fi; \
+	done
 
 uninstall:
 	rm -f "$(BINDIR)/iairport" "$(DATADIR)/oui.txt"
-	rm -rf "$(APPINSTALLDIR)/iairport.app" "$(LIBEXECDIR)/iairport.app"
+	rm -rf "$(APPINSTALLDIR)/iairport.app" "$(LIBEXECDIR)/iairport.app" "$(APPLICATIONSDIR)/iairport.app"
 
 clean:
 	swift package clean
