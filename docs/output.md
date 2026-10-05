@@ -41,6 +41,15 @@ ROAM REQUEST  target any ch 44 flags 0
 
 IP events use JSON type `ip`. DHCP and DHCPv6 changes use JSON type `dhcp`. Roam decision and problematic-network airportd lines can also print as event lines.
 
+`bssid_source` can change during a run. A first run starts in cache mode and switches to live once the Location grant lands. iairport prints `Live SSID/BSSID available.` at the switch. When the first live BSSID differs from the cached one, the scan cache was stale, so iairport corrects the current association and its summary row instead of reporting a roam:
+
+```text
+2026/10/05 09:00:12  Live SSID/BSSID available.
+2026/10/05 09:00:12  BSSID is 00:0b:86:11:22:02 "AP-Lobby-02"; the scan cache said 00:0b:86:11:22:01. Corrected, not counted as a roam.
+```
+
+That line uses JSON type `bssid_correction` with `cached_bssid`, `bssid`, and `ap_name`. Rows already written to the CSV files keep the cached value with `bssid_source=cache`.
+
 ## Summary
 
 Ctrl-C, SIGTERM, and SIGHUP stop the log stream and print a summary. The summary includes elapsed time, roams, reconnects, disconnects, distinct BSSIDs, and bytes. It also prints final IPv4 and IPv6 state. When roam history exists, it prints time, SSID, BSSID, AP name, vendor, channel, join RSSI, leave RSSI, and dwell.

@@ -121,6 +121,12 @@ public enum MACAddress {
                 }.joined(separator: ":")
             }
         }
+        // CachedScanRecord and other ether_ntoa-style sources drop leading
+        // zeros, so "68:51:34:7c:32:1" means "68:51:34:7c:32:01".
+        let octets = value.split(separator: ":", omittingEmptySubsequences: false)
+        if octets.count == 6, octets.allSatisfy({ (1...2).contains($0.count) }) {
+            value = octets.map { $0.count == 1 ? "0" + $0 : String($0) }.joined(separator: ":")
+        }
         let range = NSRange(value.startIndex..<value.endIndex, in: value)
         guard validPattern.firstMatch(in: value, range: range) != nil else { return nil }
         guard !invalidValues.contains(value) else { return nil }

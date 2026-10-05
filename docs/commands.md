@@ -15,13 +15,16 @@ iairport uses simple flags. Unknown flags are usage errors. Use `iairport --help
 | `--no-color` | Auto | Disable ANSI color. Non-TTY output also disables color. |
 | `--json` | Off | Write newline-delimited JSON. This also disables color. |
 | `--interval N` | `1` | Set the sample interval in seconds. |
+| `--sudo-log` | Off | Ask sudo once at startup to run `log stream` as root. |
 | `-h`, `--help` | Off | Show help and exit. |
 
 `--interval` accepts only finite positive values up to 86400. A zero, negative, non-finite, or larger value is a usage error. In non-TTY output, the status line prints once per interval.
 
 ## sudo
 
-`sudo iairport` starts a root helper for `wdutil` and runs the monitor as the invoking user. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If neither path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
+`log stream` refuses to run for accounts outside the `admin` group. On such an account `iairport --sudo-log` asks sudo once at startup for exactly `/usr/bin/log stream --predicate 'process == "airportd"' --info --style compact`. Only that command runs as root. iairport keeps running as you and reads its output. The flag needs a terminal on stdin and stderr; otherwise iairport prints why it skipped the prompt and runs without root. Admin accounts skip it too, since `log stream` already runs for them. Press Ctrl-C at the prompt to skip it. If sudo refuses, iairport continues without log events. The `wdutil` fields need a long-lived root process, so this prompt does not provide them. Without the flag, plain `iairport` never prompts; when `log stream` fails it prints one warning that names both `--sudo-log` and `sudo iairport`.
+
+`sudo iairport` starts a root helper for `wdutil` and `log stream` and runs the monitor as the invoking user. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If no path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
 
 ## Exit codes
 

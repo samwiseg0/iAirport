@@ -24,13 +24,14 @@ The tests cover pure logic in `IAirportCore`. They do not need root. They should
 
 - `all` runs `bundle`.
 - `build` runs `swift build -c release`.
-- `bundle` creates `build/iairport.app`.
+- `bundle` creates `build/iairport.app`, including `Resources/AppIcon.icns`.
+- `icon` regenerates `Resources/AppIcon.icns` from `scripts/make-icon.swift` (CoreGraphics and `iconutil`, no other tools).
 - `test` runs `swift test`.
 - `install` installs an existing app bundle, command symlink, and OUI file.
 - `uninstall` removes the installed app bundle, symlink, and OUI file.
 - `clean` removes build output.
 
-`make install` uses `PREFIX ?= /usr/local`. It expects `build/iairport.app` to exist, so run `make` first. It writes the app to `/usr/local/libexec/iairport.app`. It symlinks `/usr/local/bin/iairport` to the app binary. It also writes `/usr/local/share/iairport/oui.txt`. Run `sudo make install` after each build when you need to test live mode. A bundle run from a repo clone under Documents, Desktop, or Downloads stays in cache mode.
+`make install` uses `PREFIX ?= /usr/local`. It expects `build/iairport.app` to exist, so run `make` first. It copies the app to `/usr/local/libexec/iairport.app` (`APPINSTALLDIR`), symlinks `/usr/local/bin/iairport` to the app binary, and writes `/usr/local/share/iairport/oui.txt`. It then removes an `iairport.app` left at the other install location, `/Applications` or `libexec`, so one bundle with this identifier stays installed. Launch Services marks bundles outside `/Applications` launch-disabled on some managed Macs; locationd then fails to verify the app and clears its Location grant. `sudo make install APPINSTALLDIR=/Applications` is the fix there. Run `sudo make install` after each build when you need to test live mode. A bundle run from a repo clone under Documents, Desktop, or Downloads stays in cache mode.
 
 ## OUI refresh
 

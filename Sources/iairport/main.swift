@@ -51,14 +51,14 @@ if geteuid() == 0,
     }
 }
 
-// `sudo iairport`: stay root as the wdutil helper and run the monitor as the user.
+// `sudo iairport`: stay root as the wdutil and log stream helper and run the monitor as the user.
 if geteuid() == 0,
    let sudoUID = getenv("SUDO_UID").flatMap({ uid_t(String(cString: $0)) }),
    sudoUID != 0,
    getenv("IAIRPORT_SUDO") == nil {
     switch RootHelperServer.launchUserChild(executable: executablePath, arguments: launchArguments, uid: sudoUID) {
     case .success(let child):
-        RootHelperServer.serve(fd: child.fd, childPID: child.pid)
+        RootHelperServer.serve(fd: child.fd, childPID: child.pid, logWriteFD: child.logWriteFD)
     case .failure(let error):
         FileHandle.standardError.write(Data("warning: could not start the user-level monitor (\(error)); running as root in cache mode\n".utf8))
     }
@@ -76,6 +76,21 @@ case .success(let options):
     if options.debugToggle {
         exit(WdutilInfo.toggleDebug())
     }
+    // `iairport --sudo-log`: `log stream` needs root on accounts outside the
+    // admin group, so ask sudo for exactly that command, up front, while the
+    // terminal is still free for the prompt.
+    let note: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+    switch SudoLogStream.decide(sudoLog: options.sudoLog) {
+    case .none:
+        break
+    case .skip(let reason):
+        note(reason)
+    case .offer:
+        note("iairport asks sudo to run `/usr/bin/log stream` for airportd. Only that command runs as root. Approve the prompt, or press Ctrl-C to skip.")
+        if SudoLogStream.start(note: note) != nil {
+            note("Root log stream running: roam markers, roam reasons and join timing are on.")
+        }
+    }
     var activeMonitor: IAirportMonitor?
     let gate = LocationGateRuntime(interfaceName: options.interfaceName ?? LinkReader.defaultInterfaceName(), executablePath: executablePath, jsonMode: options.json)
     gate.start { result in
@@ -83,6 +98,13 @@ case .success(let options):
         monitor.onLiveSourceLost = { gate.requestPromptAgain() }
         activeMonitor = monitor
         SignalInstaller.install {
+            // First signal: clean shutdown on the state queue. Second signal:
+            // the queue is stuck, so kill children and leave right away.
+            if SignalInstaller.recordSignal() > 1 {
+                WdutilInfo.terminateChildren()
+                SudoLogStream.shared?.stop()
+                _exit(130)
+            }
             monitor.requestShutdown()
         }
         monitor.start()

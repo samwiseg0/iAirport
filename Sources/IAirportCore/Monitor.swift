@@ -16,8 +16,12 @@ public final class IAirportMonitor {
     private var cacheReason: LocationCacheReason?
     private var canRecheckLiveSource: Bool
     private let protectedFolder: String?
+    private let promptPending: Bool
     private var cacheWarningPrinted = false
     private var liveSourceLinePrinted = false
+    /// Set when the BSSID source just moved from cache to live. The next
+    /// sample checks the cached BSSID against the live one before committing.
+    private var liveSwitchPending = false
     public var onLiveSourceLost: (() -> Bool)?
     private var wdutilPrivilege: WdutilInfo.Privilege = .unavailable
     private var wdutilHintPrinted = false
@@ -58,6 +62,7 @@ public final class IAirportMonitor {
     private var pendingCacheRoam: AssociationInfo?
     private var unresolvedCacheRoamFrom: String?
     private var firstWithheldAt: Date?
+    private var withheldRecheckScheduled = false
 
     public init(options: RunOptions, executablePath: String?, locationGate: LocationGateResult) {
         self.options = options
@@ -67,6 +72,7 @@ public final class IAirportMonitor {
         cacheReason = locationGate.cacheReason
         canRecheckLiveSource = locationGate.canRecheck
         protectedFolder = locationGate.protectedFolder
+        promptPending = locationGate.promptPending
         let loaded = OUI.load(explicitPath: options.ouiPath, executablePath: executablePath)
         oui = loaded.0
         ouiWarning = loaded.1
@@ -105,7 +111,7 @@ public final class IAirportMonitor {
 
     private func printHeader() {
         guard !options.json else { return }
-        renderer.event(line: "iairport v2.0.0 (Swift rewrite of iAirport by Guillaume Germain)")
+        renderer.event(line: "iairport v2.1.0 (Swift rewrite of iAirport by Guillaume Germain)")
         renderer.event(line: macOSLine())
         renderer.event(line: "interface \(interfaceName)")
         if let ouiWarning { renderer.event(line: "warning: \(ouiWarning)", color: .yellow) }
@@ -124,17 +130,38 @@ public final class IAirportMonitor {
         case .noGrant:
             if let protectedFolder {
                 renderer.event(line: "Location is granted, but the app bundle is under \(protectedFolder), which macOS protects. locationd cannot identify it there. Run `sudo make install` and use /usr/local/bin/iairport.", color: .yellow)
+            } else if promptPending {
+                renderer.event(line: "BSSID comes from the scan cache until Location is allowed. If no dialog appeared, turn on iairport in System Settings > Privacy & Security > Location Services. iairport switches to live without a restart.", color: .yellow)
             } else {
                 renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport. If no prompt appeared, quit any other running copy of iairport and run again.", color: .yellow)
             }
         }
     }
 
+    // The probe can run `sudo -n`, so keep it off the state queue. A slow or
+    // prompting sudo must not block sampling or Ctrl-C.
     private func configureWdutilPrivilege() {
-        wdutilPrivilege = WdutilInfo.effectivePrivilege()
-        if options.verbose {
-            renderer.event(line: wdutilPrivilege.description, color: .dim)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let privilege = WdutilInfo.effectivePrivilege()
+            guard let self else { return }
+            self.queue.async {
+                guard !self.shuttingDown else { return }
+                self.wdutilPrivilege = privilege
+                if self.options.verbose {
+                    self.renderer.event(line: privilege.description, color: .dim)
+                }
+                self.startWdutilTimer()
+            }
         }
+    }
+
+    private func startWdutilTimer() {
+        guard wdutilPrivilege != .unavailable, wdutilTimer == nil else { return }
+        let wd = DispatchSource.makeTimerSource(queue: queue)
+        wd.schedule(deadline: .now(), repeating: .seconds(5))
+        wd.setEventHandler { [weak self] in self?.pollWdutil() }
+        wd.resume()
+        wdutilTimer = wd
     }
 
     private func setupWatchers() {
@@ -155,13 +182,6 @@ public final class IAirportMonitor {
         timer.setEventHandler { [weak self] in self?.sampleAndCommit(reason: "poll") }
         timer.resume()
         self.timer = timer
-        if wdutilPrivilege != .unavailable {
-            let wd = DispatchSource.makeTimerSource(queue: queue)
-            wd.schedule(deadline: .now(), repeating: .seconds(5))
-            wd.setEventHandler { [weak self] in self?.pollWdutil() }
-            wd.resume()
-            wdutilTimer = wd
-        }
     }
 
     private func handleStoreKeys(_ keys: [String]) {
@@ -216,8 +236,15 @@ public final class IAirportMonitor {
                 firstWithheldAt = nil
                 downgradeToCacheSource()
                 sample = linkReader.read(metrics: metrics, ipState: ip, throughput: throughput, oui: oui, bssidSource: bssidSource)
-            } else if firstWithheldAt == nil {
-                firstWithheldAt = sample.timestamp
+            } else {
+                if firstWithheldAt == nil {
+                    firstWithheldAt = sample.timestamp
+                }
+                // The radio is still associated; only the BSSID is hidden. Do
+                // not commit it as a disconnect. Look again once the 500 ms
+                // window has passed, then fall back to the scan cache.
+                scheduleWithheldRecheck()
+                return
             }
         } else {
             firstWithheldAt = nil
@@ -230,6 +257,10 @@ public final class IAirportMonitor {
             // notification carry the new AP's name.
             let changed = association.currentAssociation?.bssid != bssid
             sample.apName = apNames.resolve(bssid, force: changed, now: sample.timestamp)
+        }
+        if liveSwitchPending {
+            liveSwitchPending = false
+            correctStaleCacheAssociation(sample: sample)
         }
         let beforeIP = lastObservedIP
         let transition = association.commit(.from(sample: sample), at: sample.timestamp)
@@ -259,19 +290,62 @@ public final class IAirportMonitor {
         flushDHCP(now: sample.timestamp)
     }
 
+    private func scheduleWithheldRecheck() {
+        guard !withheldRecheckScheduled else { return }
+        withheldRecheckScheduled = true
+        queue.asyncAfter(deadline: .now() + .milliseconds(600)) { [weak self] in
+            guard let self else { return }
+            self.withheldRecheckScheduled = false
+            self.sampleAndCommit(reason: "withheld")
+        }
+    }
+
     private func recheckLiveSourceIfNeeded() {
         guard bssidSource == .cache, canRecheckLiveSource, linkReader.liveBSSIDAvailable() else { return }
         bssidSource = .live
+        liveSwitchPending = true
         if !liveSourceLinePrinted {
             liveSourceLinePrinted = true
             writeEvent("Live SSID/BSSID available.", color: .cyan, type: "log")
         }
     }
 
+    // The scan cache can lag the real association. When the first live sample
+    // names another BSSID than the cached one, the link did not move; the
+    // cache was stale. Replace the association and its history row instead of
+    // reporting a roam.
+    private func correctStaleCacheAssociation(sample: LinkSample) {
+        guard sample.status == .associated, let live = sample.bssid, live != "?",
+              let old = association.currentAssociation, old.bssidSource == .cache, old.bssid != live,
+              // A cache-mode `ROAM old -> ?` already reported a move away from
+              // old. The normal commit resolves it with the live BSSID.
+              unresolvedCacheRoamFrom != old.bssid,
+              case .associated(let info) = AssociationSnapshot.from(sample: sample) else { return }
+        association.rebaseline(info)
+        if let index = currentHistoryIndex, history.indices.contains(index) {
+            history[index].bssid = info.bssid
+            history[index].apName = info.apName
+            history[index].vendor = sample.vendor
+            history[index].channel = info.channel
+        }
+        if !history.contains(where: { $0.bssid == old.bssid }) {
+            distinctBSSIDs.remove(old.bssid)
+        }
+        distinctBSSIDs.insert(info.bssid)
+        csv?.writeBSSID(info.bssid)
+        let name = info.apName.map { " \"\($0)\"" } ?? ""
+        let message = "BSSID is \(info.bssid)\(name); the scan cache said \(old.bssid). Corrected, not counted as a roam."
+        var extra: [String: Any] = ["cached_bssid": old.bssid, "bssid": info.bssid]
+        if let apName = info.apName { extra["ap_name"] = apName }
+        let json = OutputFormatter.eventJSON(type: "bssid_correction", message: message, date: sample.timestamp, time: time, extra: extra)
+        writeEvent(message, color: .cyan, type: "bssid_correction", json: json)
+    }
+
     // airportd answers the first BSSID request from a stale grant when the binary
     // changed, then withholds every later one. Fall back to the cache and ask again.
     private func downgradeToCacheSource() {
         bssidSource = .cache
+        liveSwitchPending = false
         cacheReason = .noGrant
         canRecheckLiveSource = true
         liveSourceLinePrinted = false
@@ -633,6 +707,8 @@ public final class IAirportMonitor {
         shuttingDown = true
         timer?.cancel()
         wdutilTimer?.cancel()
+        WdutilInfo.terminateChildren()
+        SudoLogStream.shared?.stop()
         coreWLANBridge?.stop()
         dynamicStore?.stop()
         logTail?.stop()
@@ -734,6 +810,16 @@ private struct DriverSignal {
 
 public enum SignalInstaller {
     private static var sources: [DispatchSourceSignal] = []
+    private static let countLock = NSLock()
+    private static var count = 0
+
+    /// Counts delivered shutdown signals and returns the new total.
+    public static func recordSignal() -> Int {
+        countLock.lock()
+        defer { countLock.unlock() }
+        count += 1
+        return count
+    }
 
     public static func install(on queue: DispatchQueue = DispatchQueue.global(), handler: @escaping () -> Void) {
         signal(SIGPIPE, SIG_IGN)

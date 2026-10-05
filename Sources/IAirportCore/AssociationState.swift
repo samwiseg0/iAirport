@@ -61,6 +61,17 @@ public struct AssociationTracker {
         return nil
     }
 
+    /// Replaces the current association without reporting a transition. Used
+    /// when the BSSID source changes and the old value came from a stale
+    /// cache. The join time carries over, since the real link did not change.
+    public mutating func rebaseline(_ info: AssociationInfo) {
+        var corrected = info
+        if let bssid = MACAddress.normalize(info.bssid) { corrected.bssid = bssid }
+        if let old = currentAssociation { corrected.since = old.since }
+        current = .associated(corrected)
+        lastAssociated = corrected
+    }
+
     public mutating func commit(_ snapshot: AssociationSnapshot, at date: Date) -> AssociationTransition? {
         let normalized = normalize(snapshot, at: date)
         defer { current = normalized }

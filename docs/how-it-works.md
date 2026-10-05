@@ -8,7 +8,7 @@ The old tool read `airport -I` and tailed `/var/log/wifi.log`. The `airport` bin
 
 ## Location permission
 
-macOS treats Wi-Fi SSID and BSSID as location data. iairport ships as `iairport.app`, and the command is a symlink to its binary. At startup, iairport resolves the symlink and re-runs the real app path so macOS sees the bundle. On first run, click Allow at the Location prompt. iairport then runs `open -g -j` once as a handshake and continues in the same process. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`. Root has no Location grant, so `sudo iairport` re-runs itself as the invoking user.
+macOS treats Wi-Fi SSID and BSSID as location data. iairport ships as `iairport.app`, and the command is a symlink to its binary. At startup, iairport resolves the symlink and re-runs the real app path so macOS sees the bundle. On first run, iairport asks for Location and starts the monitor in cache mode right away. It does not wait for the dialog. When you click Allow, iairport runs `open -g -j` once as a handshake, and the next sample switches to live in the same process. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`. Root has no Location grant, so `sudo iairport` re-runs itself as the invoking user.
 
 ## CoreWLAN
 
@@ -20,7 +20,7 @@ SCDynamicStore holds `State:/Network/Interface/en0/AirPort` on the verified host
 
 ## airportd log stream
 
-iairport runs `log stream --predicate 'process == "airportd"' --info --style compact`. LQM lines arrive about every 5 seconds and carry CCA, SNR, retry counts, rates, width, and band. Roam markers include `BEST CONNECTED ROAM triggered`, `Requesting Roam : {`, and `APPLE80211_M_ROAMED`. `AUTO-JOIN` lines carry join timing and FT data. DHCP, DHCPv6, and IPv6 RA/SLAAC changes also appear there. BSSIDs in these log lines are redacted.
+iairport runs `log stream --predicate 'process == "airportd"' --info --style compact`. `log stream` needs an admin account. Under `sudo iairport` the root helper runs it instead, when the monitor sends `log-stream` once over the helper socket. Its output reaches the monitor through a pipe whose read end the monitor inherits at spawn. The helper restarts the stream with backoff, closes the pipe after five quick failures, and stops it when the monitor exits. The command and predicate are fixed in the helper. `iairport --sudo-log` on an account that is not an admin asks sudo once at startup for the same `log stream` command and reads its stdout. Until the first `log stream` line arrives, sudo's stdout and stderr go to the terminal so a policy prompt stays readable. After that, stdout is log data. LQM lines arrive about every 5 seconds and carry CCA, SNR, retry counts, rates, width, and band. Roam markers include `BEST CONNECTED ROAM triggered`, `Requesting Roam : {`, and `APPLE80211_M_ROAMED`. `AUTO-JOIN` lines carry join timing and FT data. DHCP, DHCPv6, and IPv6 RA/SLAAC changes also appear there. BSSIDs in these log lines are redacted.
 
 ## getifaddrs counters
 
@@ -28,7 +28,7 @@ iairport reads the `AF_LINK` record for the Wi-Fi interface with `getifaddrs`. I
 
 ## wdutil through sudo
 
-`wdutil info` adds fields that CoreWLAN does not always expose. iairport reads MCS, NSS, guard interval, CCA, PHY, and security there. `wdutil` needs root, and root has no Location grant. `sudo iairport` keeps root as a helper for `wdutil info` and `wdutil log`. It runs the monitor as the invoking user. The monitor sends `info` or `log` requests over a socket. Plain `iairport` after `sudo -v` calls `sudo -n wdutil info` directly. Without either path, those fields stay blank.
+`wdutil info` adds fields that CoreWLAN does not always expose. iairport reads MCS, NSS, guard interval, CCA, PHY, and security there. `wdutil` needs root, and root has no Location grant. `sudo iairport` keeps root as a helper for `wdutil info` and `wdutil log`. It runs the monitor as the invoking user. The monitor sends `info` or `log` requests over a socket. Plain `iairport` after `sudo -v` calls `sudo -n wdutil info` directly. Without either path, those fields stay blank. The `sudo -n` probe runs off the state queue with stdin from `/dev/null` and a 3-second timeout. It is skipped when `/etc/sudo.conf` loads a plugin that is not `sudoers_*`, because such plugins can ignore `-n` and prompt.
 
 The split exists because sudo 1.9.14 and later run each command in a new pty and tie the sudo ticket to the tty. A user process started by root cannot reuse the ticket.
 

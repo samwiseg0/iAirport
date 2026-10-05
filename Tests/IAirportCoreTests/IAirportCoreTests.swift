@@ -140,6 +140,28 @@ final class AssociationStateTests: XCTestCase {
         XCTAssertNil(tracker.commit(a2, at: t0.addingTimeInterval(1)))
         XCTAssertEqual(tracker.generation, generation)
     }
+
+    func testRebaselineReplacesWithoutTransition() {
+        var tracker = AssociationTracker()
+        let t0 = Date(timeIntervalSince1970: 0)
+        let cached = AssociationInfo(bssid: "aa:bb:cc:dd:ee:01", ssid: "s", channel: 44, rssi: -50, since: t0, bssidSource: .cache)
+        XCTAssertEqual(tracker.commit(.associated(cached), at: t0)?.kind, .join)
+        let generation = tracker.generation
+        // Live says another BSSID. The cache was stale, so no roam.
+        let live = AssociationInfo(bssid: "AA:BB:CC:DD:EE:2", ssid: "s", channel: 44, rssi: -50, since: t0.addingTimeInterval(5), bssidSource: .live)
+        tracker.rebaseline(live)
+        XCTAssertEqual(tracker.currentAssociation?.bssid, "aa:bb:cc:dd:ee:02")
+        XCTAssertEqual(tracker.currentAssociation?.since, t0)
+        XCTAssertEqual(tracker.currentAssociation?.bssidSource, .live)
+        XCTAssertEqual(tracker.generation, generation)
+        let same = AssociationSnapshot.associated(AssociationInfo(bssid: "aa:bb:cc:dd:ee:02", ssid: "s", channel: 44, rssi: -55, since: t0, bssidSource: .live))
+        XCTAssertNil(tracker.commit(same, at: t0.addingTimeInterval(6)))
+        let next = AssociationSnapshot.associated(AssociationInfo(bssid: "aa:bb:cc:dd:ee:03", ssid: "s", channel: 149, rssi: -60, since: t0, bssidSource: .live))
+        let roam = tracker.commit(next, at: t0.addingTimeInterval(7))
+        XCTAssertEqual(roam?.kind, .roam)
+        XCTAssertEqual(roam?.old?.bssid, "aa:bb:cc:dd:ee:02")
+        XCTAssertEqual(roam?.dwell, 7)
+    }
 }
 
 final class UtilityTests: XCTestCase {
@@ -287,6 +309,9 @@ final class UtilityTests: XCTestCase {
         XCTAssertEqual(env["LOGNAME"], "user")
         XCTAssertEqual(env["IAIRPORT_SUDO"], "1")
         XCTAssertEqual(env["IAIRPORT_HELPER_FD"], "7")
+        XCTAssertNil(env["IAIRPORT_LOG_FD"])
+        let withLog = DropTarget.childEnvironment(base: [:], target: target, helperFD: 7, logFD: 9)
+        XCTAssertEqual(withLog["IAIRPORT_LOG_FD"], "9")
         XCTAssertEqual(env["IAIRPORT_DROP_TO"], "501:20:user:/Users/user")
         XCTAssertEqual(env["PATH"], "/usr/bin")
     }
@@ -308,6 +333,217 @@ final class UtilityTests: XCTestCase {
         XCTAssertEqual(transition?.new?.bssid, "?")
         XCTAssertEqual(transition?.new?.bssidSource, .cache)
         XCTAssertNil(CacheModeRoam.transitionFromDriverSignal(old: old, cachedBSSIDAfterSettle: "00:0b:86:11:22:02", at: t0.addingTimeInterval(3)))
+    }
+}
+
+final class SudoProbeTests: XCTestCase {
+    func testStockSudoConfIsStandard() {
+        let conf = """
+        # sudo.conf
+        #Plugin sudoers_policy sudoers.so
+        Plugin sudoers_policy sudoers.so
+        Plugin sudoers_io sudoers.so
+        Path askpass /usr/X11R6/bin/ssh-askpass
+        """
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: conf), [])
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: ""), [])
+    }
+
+    func testDefendpointPluginIsThirdParty() {
+        let conf = "Plugin avecto_policy /usr/local/libexec/Avecto/Defendpoint/1.0/sudo/sudoers.so\n"
+        XCTAssertEqual(SudoConfig.thirdPartyPlugins(confText: conf), ["avecto_policy"])
+    }
+
+    func testMissingSudoConfIsStandard() {
+        XCTAssertTrue(SudoConfig.usesStandardPolicy(path: "/nonexistent/sudo.conf"))
+    }
+
+    func testBoundedProcessKillsChildAfterTimeout() {
+        let start = Date()
+        let result = BoundedProcess.run(executable: "/bin/sleep", arguments: ["30"], timeout: 0.3)
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testBoundedProcessReturnsOutputAndStatus() {
+        let result = BoundedProcess.run(executable: "/bin/sh", arguments: ["-c", "echo hi; exit 3"], timeout: 5)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.status, 3)
+        XCTAssertEqual(result.output.flatMap { String(data: $0, encoding: .utf8) }, "hi\n")
+    }
+
+    func testBoundedProcessStdinIsNull() {
+        let result = BoundedProcess.run(executable: "/bin/cat", arguments: [], timeout: 5)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.status, 0)
+    }
+
+    func testLogStreamNonAdminIsPermanent() {
+        XCTAssertTrue(LogStreamTail.isPermanentFailure("log: Must be admin to run 'stream' command"))
+        XCTAssertFalse(LogStreamTail.isPermanentFailure(nil))
+        XCTAssertFalse(LogStreamTail.isPermanentFailure("Filtering the log data using \"process == airportd\""))
+    }
+}
+
+final class RootLogStreamTests: XCTestCase {
+    private func readAll(_ fd: Int32, timeout: TimeInterval) -> (data: Data, eof: Bool) {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let count = read(fd, &buffer, buffer.count)
+            if count > 0 { data.append(contentsOf: buffer[0..<count]); continue }
+            if count == 0 { return (data, true) }
+            usleep(20_000)
+        }
+        return (data, false)
+    }
+
+    func testProtocolAcceptsLogStream() {
+        XCTAssertEqual(RootHelperProtocol.encodeRequest(["log-stream"]), Data("log-stream\n".utf8))
+        XCTAssertEqual(RootHelperProtocol.parseRequest("log-stream\n"), ["log-stream"])
+        XCTAssertNil(RootHelperProtocol.parseRequest("log-stream extra\n"))
+    }
+
+    func testResponseRouting() {
+        XCTAssertEqual(RootHelperServer.response(for: "log-stream", logStreamer: nil), RootHelperProtocol.encodeResponse(status: 1, output: Data()))
+        XCTAssertEqual(RootHelperServer.response(for: "rm -rf /", logStreamer: nil), RootHelperProtocol.encodeResponse(status: 2, output: Data()))
+        let info = RootHelperServer.response(for: "info", logStreamer: nil, wdutil: { _ in (Data("x".utf8), 0) })
+        XCTAssertEqual(info, RootHelperProtocol.encodeResponse(status: 0, output: Data("x".utf8)))
+    }
+
+    func testStreamerWritesThenStopClosesPipe() {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&fds), 0)
+        defer { close(fds[0]) }
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/bin/sh", arguments: ["-c", "echo one; echo two; exec sleep 30"])
+        XCTAssertTrue(streamer.start())
+        XCTAssertTrue(streamer.start())
+        XCTAssertEqual(String(decoding: readAll(fds[0], timeout: 1).data, as: UTF8.self), "one\ntwo\n")
+        streamer.stop()
+        XCTAssertTrue(readAll(fds[0], timeout: 3).eof)
+        XCTAssertFalse(streamer.start())
+    }
+
+    func testStreamerGivesUpAndClosesPipe() {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&fds), 0)
+        defer { close(fds[0]) }
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/usr/bin/false", arguments: [], maxAttempts: 1)
+        _ = streamer.start()
+        XCTAssertTrue(readAll(fds[0], timeout: 5).eof)
+    }
+
+    func testTailReadsHelperStream() {
+        var sock: [Int32] = [-1, -1]
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &sock), 0)
+        XCTAssertEqual(pipe(&fds), 0)
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/bin/sh", arguments: ["-c", "sleep 0.2; echo line A; echo line B; exec sleep 30"])
+        let serverFD = sock[0]
+        Thread.detachNewThread {
+            while let line = FDIO.readLine(serverFD) {
+                guard FDIO.writeAll(serverFD, RootHelperServer.response(for: line, logStreamer: streamer)) else { break }
+            }
+            close(serverFD)
+            streamer.stop()
+        }
+        let queue = DispatchQueue(label: "test.state")
+        let received = expectation(description: "two lines")
+        var lines: [String] = []
+        let tail = LogStreamTail(queue: queue, renderer: Renderer(noColor: true, jsonMode: false), helper: RootHelperClient(fd: sock[1], logFD: fds[0])) { line in
+            lines.append(line)
+            if lines.count == 2 { received.fulfill() }
+        }
+        queue.async { tail.start() }
+        wait(for: [received], timeout: 5)
+        XCTAssertEqual(lines, ["line A", "line B"])
+        queue.sync { tail.stop() }
+        close(sock[1])
+    }
+}
+
+final class SudoLogStreamTests: XCTestCase {
+    func testSplitFindsHandOver() {
+        let promptOnly = SudoLogStream.split(Data("1. a\nSelect a reason: ".utf8))
+        XCTAssertNil(promptOnly.logData)
+        XCTAssertEqual(String(decoding: promptOnly.prompt, as: UTF8.self), "1. a\nSelect a reason: ")
+
+        let atLineStart = SudoLogStream.split(Data("menu\nSelect: 1\nFiltering the log data using x\nTimestamp  Ty\n".utf8))
+        XCTAssertEqual(String(decoding: atLineStart.prompt, as: UTF8.self), "menu\nSelect: 1\n")
+        XCTAssertTrue(String(decoding: atLineStart.logData ?? Data(), as: UTF8.self).hasPrefix("Filtering"))
+
+        // The reason prompt ends without a newline, so the banner follows it.
+        let sameLine = SudoLogStream.split(Data("Select a reason: Filtering the log data using x\n".utf8))
+        XCTAssertEqual(String(decoding: sameLine.prompt, as: UTF8.self), "Select a reason: ")
+        XCTAssertTrue(String(decoding: sameLine.logData ?? Data(), as: UTF8.self).hasPrefix("Filtering"))
+    }
+
+    func testLogStreamLineAndBannerOverlap() {
+        XCTAssertTrue(SudoLogStream.isLogStreamLine("2026-10-05 15:00:00.000 Df airportd[1:2] x"))
+        XCTAssertTrue(SudoLogStream.isLogStreamLine("Timestamp               Ty Process[PID:TID]"))
+        XCTAssertFalse(SudoLogStream.isLogStreamLine("Select a reason: 1"))
+        XCTAssertEqual(SudoLogStream.bannerPrefixOverlap(Data("Select a reason: Filt".utf8)), 4)
+        XCTAssertEqual(SudoLogStream.bannerPrefixOverlap(Data("Select a reason: ".utf8)), 0)
+    }
+
+    func testRefusedSudoReturnsNilWithStatus() {
+        var notes: [String] = []
+        let output = Pipe()
+        let tools = SudoLogStream.Tools(sudo: "/usr/bin/false", log: "/usr/bin/log")
+        XCTAssertNil(SudoLogStream.start(tools: tools, promptOutput: output.fileHandleForWriting, note: { notes.append($0) }))
+        XCTAssertTrue(notes.last?.contains("exit 1") == true)
+    }
+
+    func testForegroundChildStaysInProcessGroup() throws {
+        let child = try XCTUnwrap(ForegroundChild.spawn(executable: "/bin/sh", arguments: ["-c", "ps -o pgid= -p $$"]))
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 256)
+        while true {
+            let count = read(child.stdoutFD, &buffer, buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        XCTAssertEqual(child.exitStatus(wait: true), 0)
+        child.closeFDs()
+        XCTAssertEqual(Int32(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)), getpgrp())
+    }
+
+    func testCLISudoLog() {
+        guard case .success(let options) = CLIParser.parse(["--sudo-log"]) else { return XCTFail() }
+        XCTAssertTrue(options.sudoLog)
+        guard case .success(let plain) = CLIParser.parse([]) else { return XCTFail() }
+        XCTAssertFalse(plain.sudoLog)
+    }
+
+    func testSudoLogDecision() {
+        XCTAssertEqual(SudoLogStream.decide(sudoLog: false, stdinIsTTY: true, stderrIsTTY: true), .none)
+        guard case .skip = SudoLogStream.decide(sudoLog: true, stdinIsTTY: false, stderrIsTTY: true) else { return XCTFail("no tty must skip") }
+        guard case .skip = SudoLogStream.decide(sudoLog: true, stdinIsTTY: true, stderrIsTTY: false) else { return XCTFail("no tty must skip") }
+        // With a terminal the answer depends on the account: admins skip, others get the prompt.
+        let withTTY = SudoLogStream.decide(sudoLog: true, stdinIsTTY: true, stderrIsTTY: true)
+        if SudoLogStream.currentUserIsAdmin() {
+            guard case .skip = withTTY else { return XCTFail("admin must skip") }
+        } else {
+            XCTAssertEqual(withTTY, .offer)
+        }
+    }
+}
+
+final class MACAddressTests: XCTestCase {
+    func testPadsUnpaddedOctets() {
+        // CachedScanRecord stores BSSIDs ether_ntoa style, without leading zeros.
+        XCTAssertEqual(MACAddress.normalize("68:51:34:7c:32:1"), "68:51:34:7c:32:01")
+        XCTAssertEqual(MACAddress.normalize("0:b:86:1:2:3"), "00:0b:86:01:02:03")
+        XCTAssertEqual(MACAddress.normalize("68:51:34:7C:32:01"), "68:51:34:7c:32:01")
+    }
+
+    func testRejectsMalformedAndPlaceholders() {
+        XCTAssertNil(MACAddress.normalize("2:0:0:0:0:0"))
+        XCTAssertNil(MACAddress.normalize("68:51:34:7c:32"))
+        XCTAssertNil(MACAddress.normalize("68:51:34:7c:32:123"))
+        XCTAssertNil(MACAddress.normalize("68:51::7c:32:01"))
     }
 }
 
