@@ -7,6 +7,7 @@ DATADIR ?= $(PREFIX)/share/iairport
 # grant, so install the bundle where Launch Services treats it as an app.
 APPINSTALLDIR ?= /Applications
 CODESIGN_IDENTITY ?= -
+SWIFT_BUILD_FLAGS ?=
 APPDIR := build/iairport.app
 
 .PHONY: all build bundle icon test install uninstall clean
@@ -14,7 +15,7 @@ APPDIR := build/iairport.app
 all: bundle
 
 build:
-	swift build -c release
+	swift build -c release $(SWIFT_BUILD_FLAGS)
 
 bundle: build
 	rm -rf "$(APPDIR)"

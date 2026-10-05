@@ -16,27 +16,32 @@ iairport watches a Mac Wi-Fi link while you roam, disconnect, and join again. It
 
 - macOS 14 or later. The current build was verified on macOS 26.5.1 arm64.
 - Location permission for iairport. macOS asks on first run.
-- Swift 5.9 or Xcode Command Line Tools to build.
+- Swift 5.9 or Xcode Command Line Tools to build. Homebrew builds from source and needs them too.
 - No root for the core monitor.
 - Root access for MCS, NSS, guard interval, and `-d` debug logging.
 
 ## Install
 
-Build the app bundle:
+Install with Homebrew:
+
+```sh
+brew install samwiseg0/tap/iairport
+```
+
+The formula builds from source, so it needs the Xcode Command Line Tools. Update with `brew upgrade iairport`.
+
+Or build and install from a clone:
 
 ```sh
 make
-```
-
-Install it:
-
-```sh
 sudo make install
 ```
 
 `make` builds `build/iairport.app`. `sudo make install` installs that existing bundle to `/Applications/iairport.app`, plus `/usr/local/bin/iairport` and `/usr/local/share/iairport/oui.txt`. Set `PREFIX=/path` for another command prefix, or `APPINSTALLDIR=/path` for another app folder. Outside `/Applications`, macOS may refuse to keep the Location grant.
 
-The supported path is `sudo make install`, then `iairport`. Run the installed command, not the app from a repo clone under Documents, Desktop, or Downloads. Those protected folders stay in cache mode. The first run asks for Location permission. Click Allow. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`.
+Run the installed command, not the app from a repo clone under Documents, Desktop, or Downloads. Those protected folders stay in cache mode. The first run asks for Location permission. Click Allow. The grant is tied to the installed binary signature, so changed code asks again after an upgrade or `sudo make install`.
+
+Keep one install. macOS holds one Location record per app, and two copies with different signatures fight over it. If an older copy is still running, the new one gets no prompt. Quit it and run again. Switching from a source install to Homebrew, run `sudo make uninstall` first.
 
 You can also build with SwiftPM, but the bare binary runs in cache mode:
 

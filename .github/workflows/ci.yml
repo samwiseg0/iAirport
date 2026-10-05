@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-26 is the current image. macos-15 keeps the macOS 14 minimum honest.
+        os: [macos-26, macos-15]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build bundle
+        run: make
+
+      - name: Test
+        run: make test
+
+      - name: Smoke test
+        run: |
+          build/iairport.app/Contents/MacOS/iairport --help
+          codesign --verify --deep --strict build/iairport.app

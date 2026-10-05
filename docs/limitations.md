@@ -10,7 +10,9 @@ airportd log lines redact BSSIDs without Apple's Wi-Fi logging profile. iairport
 
 ## Location permission
 
-The first run needs the macOS Location prompt. iairport runs in cache mode until the grant lands, then switches to live without a restart. If the dialog never appears, turn on iairport in System Settings > Privacy & Security > Location Services. If the grant is denied, iairport stays in cache mode. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`.
+The first run needs the macOS Location prompt. iairport runs in cache mode until the grant lands, then switches to live without a restart. If the dialog never appears, turn on iairport in System Settings > Privacy & Security > Location Services. If the grant is denied, iairport stays in cache mode. The grant is tied to the installed binary signature, so changed code asks again after an upgrade or `sudo make install`.
+
+macOS keeps one Location record per app bundle id. Two installed copies with different signatures, such as a Homebrew build next to a `make install` build, share that record. While one copy is running, the other gets no prompt and stays in cache mode. Starting an older copy while the current one was live dropped both to cache mode until that run ended. Keep one install.
 
 If the toggle turns itself off again within a second, locationd could not verify the app. On the verified managed Mac, locationd logged `The given bundleId or bundlePath is not a plugin or an app` and then `Clearing client authorization for verification-failed client`. Launch Services had marked the bundle `launch-disabled` at `/usr/local/libexec` and at `~/Applications`, but not in `/Applications`. That held even for an ad-hoc signed app that Gatekeeper rejects. `make install` therefore installs to `/Applications/iairport.app`.
 

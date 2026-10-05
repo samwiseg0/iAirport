@@ -130,7 +130,7 @@ public final class IAirportMonitor {
             } else if promptPending {
                 renderer.event(line: "BSSID comes from the scan cache until Location is allowed. If no dialog appeared, turn on iairport in System Settings > Privacy & Security > Location Services. iairport switches to live without a restart.", color: .yellow)
             } else {
-                renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport.", color: .yellow)
+                renderer.event(line: "Location not granted. BSSID comes from the scan cache and can lag after a join. Allow it in System Settings > Privacy & Security > Location Services > iairport. If no prompt appeared, quit any other running copy of iairport and run again.", color: .yellow)
             }
         }
     }
