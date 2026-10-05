@@ -24,6 +24,10 @@ Root has no Location grant, so `sudo iairport` runs the monitor as the invoking 
 
 `CachedScanRecord` is an undocumented SCDynamicStore value. It worked on macOS 26.5.1 and 26.6.2. Its `BSSID` string drops leading zeros in each octet, for example `68:51:34:7c:32:1`. iairport pads those octets. It can lag the live association for minutes after a join to another AP. iairport marks cache BSSIDs with `~` and treats decode failures as missing data. In cache mode it is also the only source of AP names, so only the current AP can have one.
 
+## log stream needs admin
+
+`log stream` refuses to run for accounts that are not in the `admin` group. On such accounts iairport prints one warning and runs without airportd log events. Roam markers, roam reasons and join timing stay blank. BSSIDs in those lines stay redacted either way.
+
 ## CoreWLAN callbacks
 
 CoreWLAN event registration succeeded in a plain CLI. The callbacks did not fire during the verified run. iairport still registers them, but it relies on SCDynamicStore notifications, airportd roam lines, and the poll.

@@ -353,6 +353,11 @@ final class SudoProbeTests: XCTestCase {
         XCTAssertEqual(result.status, 0)
     }
 
+    func testLogStreamNonAdminIsPermanent() {
+        XCTAssertTrue(LogStreamTail.isPermanentFailure("log: Must be admin to run 'stream' command"))
+        XCTAssertFalse(LogStreamTail.isPermanentFailure(nil))
+        XCTAssertFalse(LogStreamTail.isPermanentFailure("Filtering the log data using \"process == airportd\""))
+    }
 }
 
 final class MACAddressTests: XCTestCase {

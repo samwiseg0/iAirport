@@ -12,6 +12,7 @@ public final class LogStreamTail {
     private var stderrBuffer = Data()
     private var stopping = false
     private var restartAttempts = 0
+    private var lastErrorLine: String?
 
     public init(queue: DispatchQueue, renderer: Renderer, onLine: @escaping (String) -> Void) {
         self.queue = queue
@@ -99,17 +100,38 @@ public final class LogStreamTail {
         while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
             let line = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
             buffer.removeSubrange(buffer.startIndex...newline)
-            if emit { onLine(line) }
+            if emit {
+                onLine(line)
+            } else if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                lastErrorLine = line
+            }
         }
+    }
+
+    /// True when `log stream` refused to run for a reason a restart cannot fix.
+    static func isPermanentFailure(_ stderrLine: String?) -> Bool {
+        guard let line = stderrLine?.lowercased() else { return false }
+        return line.contains("must be admin") || line.contains("operation not permitted")
     }
 
     private func handleTermination() {
         guard !stopping else { return }
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        // Pick up a final stderr line that had no trailing newline.
+        if !stderrBuffer.isEmpty {
+            let tail = String(decoding: stderrBuffer, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tail.isEmpty { lastErrorLine = tail }
+            stderrBuffer.removeAll()
+        }
         process = nil
         stdoutPipe = nil
         stderrPipe = nil
+        if Self.isPermanentFailure(lastErrorLine) {
+            let reason = lastErrorLine.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
+            return
+        }
         restartAttempts += 1
         guard restartAttempts <= 5 else {
             renderer.event(line: "warning: log stream exited; continuing without log events", color: .yellow)
