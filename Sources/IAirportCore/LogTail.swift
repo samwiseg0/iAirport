@@ -29,6 +29,12 @@ public final class LogStreamTail {
     public func start() {
         stopping = false
         restartAttempts = 0
+        // Root `log stream` from the startup sudo prompt, if it was granted.
+        if let stream = SudoLogStream.shared?.takeStream() {
+            if !stream.initial.isEmpty { append(data: stream.initial, isError: false) }
+            attachHelperStream(fd: stream.fd)
+            return
+        }
         guard let helper else {
             launch()
             return
@@ -94,7 +100,12 @@ public final class LogStreamTail {
     private func handleHelperEOF() {
         guard !stopping else { return }
         helperHandle = nil
-        renderer.event(line: "warning: root log stream ended; continuing without log events", color: .yellow)
+        // Ctrl-C reaches a sudo-run `log stream` too, so its EOF can land just
+        // before shutdown starts. Wait a moment before calling it a failure.
+        queue.asyncAfter(deadline: .now() + .seconds(1)) { [weak self] in
+            guard let self, !self.stopping else { return }
+            self.renderer.event(line: "warning: root log stream ended; continuing without log events", color: .yellow)
+        }
     }
 
     private func launch() {
@@ -179,7 +190,7 @@ public final class LogStreamTail {
         stderrPipe = nil
         if Self.isPermanentFailure(lastErrorLine) {
             let reason = lastErrorLine.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account. Run `sudo iairport` to stream it as root. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
+            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account or root: run iairport in a terminal and approve its startup sudo prompt. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
             return
         }
         restartAttempts += 1

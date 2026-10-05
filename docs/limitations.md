@@ -20,13 +20,17 @@ Running `build/iairport.app` from Documents, Desktop, or Downloads cannot get li
 
 Root has no Location grant, so `sudo iairport` runs the monitor as the invoking user and keeps root only for `wdutil` and `log stream`.
 
+Some managed Macs replace the sudoers policy with a third-party plugin in `/etc/sudo.conf`, such as BeyondTrust (Avecto) Defendpoint. These plugins ignore `sudo -n` and prompt on the terminal. When `/etc/sudo.conf` lists a `Plugin` that is not `sudoers_*`, plain `iairport` skips the `sudo -n` path. Every `sudo -n` call also has a timeout, and on timeout iairport kills the child and restores the terminal settings. The plugin's policy can deny `sudo iairport` outright ("user is not allowed to execute ... as root"), and it can block shells as root. On those hosts plain `iairport` asks sudo once at startup for `/usr/bin/log stream` itself, which such policies may allow. The `wdutil` fields stay blank there: polling `wdutil info` every 5 seconds would need a prompt for each call.
+
+Some sudo policy plugins print prompt text, such as a reason menu, to stdout or stderr instead of the terminal. iairport copies both to the terminal until the first `log stream` line arrives. iairport starts sudo in its own process group with `posix_spawn`. Foundation's `Process` would put sudo in a new background process group, where it cannot own the terminal for its prompt and Ctrl-C never reaches it.
+
 ## CachedScanRecord
 
 `CachedScanRecord` is an undocumented SCDynamicStore value. It worked on macOS 26.5.1 and 26.6.2. Its `BSSID` string drops leading zeros in each octet, for example `68:51:34:7c:32:1`. iairport pads those octets. It can lag the live association for minutes after a join to another AP. iairport marks cache BSSIDs with `~` and treats decode failures as missing data. In cache mode it is also the only source of AP names, so only the current AP can have one.
 
 ## log stream needs admin
 
-`log stream` refuses to run for accounts that are not in the `admin` group. On such accounts iairport prints one warning and runs without airportd log events. Roam markers, roam reasons and join timing stay blank. `sudo iairport` fixes this: the root helper runs `log stream` and passes its output to the monitor. BSSIDs in those lines stay redacted either way.
+`log stream` refuses to run for accounts that are not in the `admin` group. On such accounts plain `iairport` asks sudo once at startup to run `/usr/bin/log stream` as root. iairport stops it on exit, and it also dies on its next write once iairport is gone. Without root, iairport prints one warning and runs without airportd log events. Roam markers, roam reasons and join timing stay blank. BSSIDs in those lines stay redacted either way.
 
 ## CoreWLAN callbacks
 

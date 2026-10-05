@@ -70,7 +70,7 @@ Toggle Wi-Fi debug logging:
 sudo iairport -d
 ```
 
-`sudo iairport` keeps root for `wdutil` and `log stream` and runs the monitor as your user, because root has no Location grant. On an account that is not an admin, use `sudo iairport` to get airportd log events.
+`sudo iairport` keeps root for `wdutil` and `log stream` and runs the monitor as your user, because root has no Location grant. On an account that is not an admin, plain `iairport` asks sudo once at startup to run `/usr/bin/log stream` for airportd as root. Nothing else runs as root. `--no-sudo` skips the prompt.
 
 Write plain non-TTY output:
 

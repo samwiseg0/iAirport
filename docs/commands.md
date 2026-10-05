@@ -15,13 +15,16 @@ iairport uses simple flags. Unknown flags are usage errors. Use `iairport --help
 | `--no-color` | Auto | Disable ANSI color. Non-TTY output also disables color. |
 | `--json` | Off | Write newline-delimited JSON. This also disables color. |
 | `--interval N` | `1` | Set the sample interval in seconds. |
+| `--no-sudo` | Ask when needed | Do not ask sudo for root at startup. |
 | `-h`, `--help` | Off | Show help and exit. |
 
 `--interval` accepts only finite positive values up to 86400. A zero, negative, non-finite, or larger value is a usage error. In non-TTY output, the status line prints once per interval.
 
 ## sudo
 
-`sudo iairport` starts a root helper for `wdutil` and `log stream` and runs the monitor as the invoking user. Use it when your account is not an admin, because `log stream` refuses non-admin accounts. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If neither path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
+Plain `iairport` on an account that is not an admin asks sudo once at startup for exactly `/usr/bin/log stream --predicate 'process == "airportd"' --info --style compact`. Only that command runs as root. iairport keeps running as you and reads its output. It asks only when stdin and stderr are a terminal, and `--no-sudo` turns it off. Press Ctrl-C at the prompt to skip it. If sudo refuses, iairport continues without log events. The `wdutil` fields need a long-lived root process, so this prompt does not provide them.
+
+`sudo iairport` starts a root helper for `wdutil` and `log stream` and runs the monitor as the invoking user. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If no path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
 
 ## Exit codes
 

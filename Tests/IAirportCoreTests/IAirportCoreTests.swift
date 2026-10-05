@@ -442,6 +442,58 @@ final class RootLogStreamTests: XCTestCase {
     }
 }
 
+final class SudoLogStreamTests: XCTestCase {
+    func testSplitFindsHandOver() {
+        let promptOnly = SudoLogStream.split(Data("1. a\nSelect a reason: ".utf8))
+        XCTAssertNil(promptOnly.logData)
+        XCTAssertEqual(String(decoding: promptOnly.prompt, as: UTF8.self), "1. a\nSelect a reason: ")
+
+        let atLineStart = SudoLogStream.split(Data("menu\nSelect: 1\nFiltering the log data using x\nTimestamp  Ty\n".utf8))
+        XCTAssertEqual(String(decoding: atLineStart.prompt, as: UTF8.self), "menu\nSelect: 1\n")
+        XCTAssertTrue(String(decoding: atLineStart.logData ?? Data(), as: UTF8.self).hasPrefix("Filtering"))
+
+        // The reason prompt ends without a newline, so the banner follows it.
+        let sameLine = SudoLogStream.split(Data("Select a reason: Filtering the log data using x\n".utf8))
+        XCTAssertEqual(String(decoding: sameLine.prompt, as: UTF8.self), "Select a reason: ")
+        XCTAssertTrue(String(decoding: sameLine.logData ?? Data(), as: UTF8.self).hasPrefix("Filtering"))
+    }
+
+    func testLogStreamLineAndBannerOverlap() {
+        XCTAssertTrue(SudoLogStream.isLogStreamLine("2026-10-05 15:00:00.000 Df airportd[1:2] x"))
+        XCTAssertTrue(SudoLogStream.isLogStreamLine("Timestamp               Ty Process[PID:TID]"))
+        XCTAssertFalse(SudoLogStream.isLogStreamLine("Select a reason: 1"))
+        XCTAssertEqual(SudoLogStream.bannerPrefixOverlap(Data("Select a reason: Filt".utf8)), 4)
+        XCTAssertEqual(SudoLogStream.bannerPrefixOverlap(Data("Select a reason: ".utf8)), 0)
+    }
+
+    func testRefusedSudoReturnsNilWithStatus() {
+        var notes: [String] = []
+        let output = Pipe()
+        let tools = SudoLogStream.Tools(sudo: "/usr/bin/false", log: "/usr/bin/log")
+        XCTAssertNil(SudoLogStream.start(tools: tools, promptOutput: output.fileHandleForWriting, note: { notes.append($0) }))
+        XCTAssertTrue(notes.last?.contains("exit 1") == true)
+    }
+
+    func testForegroundChildStaysInProcessGroup() throws {
+        let child = try XCTUnwrap(ForegroundChild.spawn(executable: "/bin/sh", arguments: ["-c", "ps -o pgid= -p $$"]))
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 256)
+        while true {
+            let count = read(child.stdoutFD, &buffer, buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        XCTAssertEqual(child.exitStatus(wait: true), 0)
+        child.closeFDs()
+        XCTAssertEqual(Int32(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)), getpgrp())
+    }
+
+    func testCLINoSudo() {
+        guard case .success(let options) = CLIParser.parse(["--no-sudo"]) else { return XCTFail() }
+        XCTAssertTrue(options.noSudo)
+    }
+}
+
 final class MACAddressTests: XCTestCase {
     func testPadsUnpaddedOctets() {
         // CachedScanRecord stores BSSIDs ether_ntoa style, without leading zeros.

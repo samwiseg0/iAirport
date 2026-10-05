@@ -650,6 +650,7 @@ public final class IAirportMonitor {
         timer?.cancel()
         wdutilTimer?.cancel()
         WdutilInfo.terminateChildren()
+        SudoLogStream.shared?.stop()
         coreWLANBridge?.stop()
         dynamicStore?.stop()
         logTail?.stop()

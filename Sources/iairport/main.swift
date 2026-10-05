@@ -76,6 +76,16 @@ case .success(let options):
     if options.debugToggle {
         exit(WdutilInfo.toggleDebug())
     }
+    // Plain `iairport` on an account that is not an admin: `log stream` needs
+    // root, so ask sudo for exactly that command, up front, while the terminal
+    // is still free for the prompt.
+    if SudoLogStream.shouldOffer(noSudo: options.noSudo) {
+        let note: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+        note("Your account is not an admin, so iairport asks sudo to run `/usr/bin/log stream` for airportd. Only that command runs as root. Approve the prompt, or press Ctrl-C to skip. --no-sudo turns this off.")
+        if SudoLogStream.start(note: note) != nil {
+            note("Root log stream running: roam markers, roam reasons and join timing are on.")
+        }
+    }
     var activeMonitor: IAirportMonitor?
     let gate = LocationGateRuntime(interfaceName: options.interfaceName ?? LinkReader.defaultInterfaceName(), executablePath: executablePath, jsonMode: options.json)
     gate.start { result in
@@ -87,6 +97,7 @@ case .success(let options):
             // the queue is stuck, so kill children and leave right away.
             if SignalInstaller.recordSignal() > 1 {
                 WdutilInfo.terminateChildren()
+                SudoLogStream.shared?.stop()
                 _exit(130)
             }
             monitor.requestShutdown()
