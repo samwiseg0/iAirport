@@ -2,9 +2,9 @@
 // Usage: swift scripts/make-icon.swift [output.icns]
 // Needs only CoreGraphics, ImageIO and the system `iconutil`.
 //
-// Styled after the Ghostty icon: a glossy CRT screen in a chrome bezel, with
-// a radial glow, scanlines and a glass reflection. iairport uses an orange
-// tint and a single glowing Wi-Fi symbol.
+// The icon is a glossy CRT screen in a chrome bezel, with a radial glow,
+// scanlines and a glass reflection. iairport uses an orange tint and a single
+// glowing Wi-Fi symbol.
 import CoreGraphics
 import Foundation
 import ImageIO
