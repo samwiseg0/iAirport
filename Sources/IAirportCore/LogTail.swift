@@ -190,7 +190,7 @@ public final class LogStreamTail {
         stderrPipe = nil
         if Self.isPermanentFailure(lastErrorLine) {
             let reason = lastErrorLine.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account or root: run iairport in a terminal and approve its startup sudo prompt. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
+            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account or root: run `iairport --sudo-log` and approve the sudo prompt, or run `sudo iairport`. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
             return
         }
         restartAttempts += 1

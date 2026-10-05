@@ -11,7 +11,7 @@ public struct RunOptions: Equatable {
     public var json = false
     public var interval: TimeInterval = 1.0
     public var help = false
-    public var noSudo = false
+    public var sudoLog = false
 
     public init() {}
 }
@@ -34,7 +34,7 @@ public enum CLIParser {
             case "-h", "--help": options.help = true
             case "--no-notify": options.notify = false
             case "--no-color": options.noColor = true
-            case "--no-sudo": options.noSudo = true
+            case "--sudo-log": options.sudoLog = true
             case "--json":
                 options.json = true
                 options.noColor = true
@@ -71,7 +71,7 @@ iairport [options]
       --oui PATH     path to oui.txt
       --no-notify    do not post macOS notifications on roam
       --no-color     plain output
-      --no-sudo      do not ask sudo at startup to run log stream as root
+      --sudo-log     ask sudo once at startup to run log stream as root
       --json         write newline-delimited JSON
       --interval N   sample interval in seconds. Default is 1
   -h, --help         show help

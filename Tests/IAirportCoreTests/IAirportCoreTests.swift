@@ -140,6 +140,28 @@ final class AssociationStateTests: XCTestCase {
         XCTAssertNil(tracker.commit(a2, at: t0.addingTimeInterval(1)))
         XCTAssertEqual(tracker.generation, generation)
     }
+
+    func testRebaselineReplacesWithoutTransition() {
+        var tracker = AssociationTracker()
+        let t0 = Date(timeIntervalSince1970: 0)
+        let cached = AssociationInfo(bssid: "aa:bb:cc:dd:ee:01", ssid: "s", channel: 44, rssi: -50, since: t0, bssidSource: .cache)
+        XCTAssertEqual(tracker.commit(.associated(cached), at: t0)?.kind, .join)
+        let generation = tracker.generation
+        // Live says another BSSID. The cache was stale, so no roam.
+        let live = AssociationInfo(bssid: "AA:BB:CC:DD:EE:2", ssid: "s", channel: 44, rssi: -50, since: t0.addingTimeInterval(5), bssidSource: .live)
+        tracker.rebaseline(live)
+        XCTAssertEqual(tracker.currentAssociation?.bssid, "aa:bb:cc:dd:ee:02")
+        XCTAssertEqual(tracker.currentAssociation?.since, t0)
+        XCTAssertEqual(tracker.currentAssociation?.bssidSource, .live)
+        XCTAssertEqual(tracker.generation, generation)
+        let same = AssociationSnapshot.associated(AssociationInfo(bssid: "aa:bb:cc:dd:ee:02", ssid: "s", channel: 44, rssi: -55, since: t0, bssidSource: .live))
+        XCTAssertNil(tracker.commit(same, at: t0.addingTimeInterval(6)))
+        let next = AssociationSnapshot.associated(AssociationInfo(bssid: "aa:bb:cc:dd:ee:03", ssid: "s", channel: 149, rssi: -60, since: t0, bssidSource: .live))
+        let roam = tracker.commit(next, at: t0.addingTimeInterval(7))
+        XCTAssertEqual(roam?.kind, .roam)
+        XCTAssertEqual(roam?.old?.bssid, "aa:bb:cc:dd:ee:02")
+        XCTAssertEqual(roam?.dwell, 7)
+    }
 }
 
 final class UtilityTests: XCTestCase {
@@ -488,9 +510,24 @@ final class SudoLogStreamTests: XCTestCase {
         XCTAssertEqual(Int32(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)), getpgrp())
     }
 
-    func testCLINoSudo() {
-        guard case .success(let options) = CLIParser.parse(["--no-sudo"]) else { return XCTFail() }
-        XCTAssertTrue(options.noSudo)
+    func testCLISudoLog() {
+        guard case .success(let options) = CLIParser.parse(["--sudo-log"]) else { return XCTFail() }
+        XCTAssertTrue(options.sudoLog)
+        guard case .success(let plain) = CLIParser.parse([]) else { return XCTFail() }
+        XCTAssertFalse(plain.sudoLog)
+    }
+
+    func testSudoLogDecision() {
+        XCTAssertEqual(SudoLogStream.decide(sudoLog: false, stdinIsTTY: true, stderrIsTTY: true), .none)
+        guard case .skip = SudoLogStream.decide(sudoLog: true, stdinIsTTY: false, stderrIsTTY: true) else { return XCTFail("no tty must skip") }
+        guard case .skip = SudoLogStream.decide(sudoLog: true, stdinIsTTY: true, stderrIsTTY: false) else { return XCTFail("no tty must skip") }
+        // With a terminal the answer depends on the account: admins skip, others get the prompt.
+        let withTTY = SudoLogStream.decide(sudoLog: true, stdinIsTTY: true, stderrIsTTY: true)
+        if SudoLogStream.currentUserIsAdmin() {
+            guard case .skip = withTTY else { return XCTFail("admin must skip") }
+        } else {
+            XCTAssertEqual(withTTY, .offer)
+        }
     }
 }
 

@@ -37,7 +37,15 @@ make
 sudo make install
 ```
 
-`make` builds `build/iairport.app`. `sudo make install` installs that existing bundle to `/Applications/iairport.app`, plus `/usr/local/bin/iairport` and `/usr/local/share/iairport/oui.txt`. Set `PREFIX=/path` for another command prefix, or `APPINSTALLDIR=/path` for another app folder. Outside `/Applications`, macOS may refuse to keep the Location grant.
+`make` builds `build/iairport.app`. `sudo make install` installs that existing bundle to `/usr/local/libexec/iairport.app`, plus `/usr/local/bin/iairport` and `/usr/local/share/iairport/oui.txt`. Set `PREFIX=/path` for another prefix.
+
+Some managed Macs mark app bundles outside `/Applications` launch-disabled. The Location toggle then turns itself off within a second of Allow. On those Macs install the bundle into `/Applications`:
+
+```sh
+sudo make install APPINSTALLDIR=/Applications
+```
+
+`make install` removes the bundle from the other location it has used, so one copy stays installed. A Homebrew install keeps its bundle in the Cellar and hits the same problem on such Macs. Use `make install APPINSTALLDIR=/Applications` there instead.
 
 Run the installed command, not the app from a repo clone under Documents, Desktop, or Downloads. Those protected folders stay in cache mode. The first run asks for Location permission. Click Allow. The grant is tied to the installed binary signature, so changed code asks again after an upgrade or `sudo make install`.
 
@@ -75,7 +83,7 @@ Toggle Wi-Fi debug logging:
 sudo iairport -d
 ```
 
-`sudo iairport` keeps root for `wdutil` and `log stream` and runs the monitor as your user, because root has no Location grant. On an account that is not an admin, plain `iairport` asks sudo once at startup to run `/usr/bin/log stream` for airportd as root. Nothing else runs as root. `--no-sudo` skips the prompt.
+`sudo iairport` keeps root for `wdutil` and `log stream` and runs the monitor as your user, because root has no Location grant. On an account that is not an admin, `iairport --sudo-log` asks sudo once at startup to run `/usr/bin/log stream` for airportd as root. Nothing else runs as root. Without the flag, iairport never prompts.
 
 Write plain non-TTY output:
 

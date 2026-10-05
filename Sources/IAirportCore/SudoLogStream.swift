@@ -4,8 +4,8 @@ import Darwin
 /// No-op SIGINT handler used while sudo owns the prompt.
 private func sudoPromptSIGINT(_ signal: Int32) {}
 
-// Plain `iairport` on an account that is not an admin, where `log stream`
-// refuses to run. iairport asks sudo once, at startup, for exactly
+// Plain `iairport --sudo-log` on an account that is not an admin, where
+// `log stream` refuses to run. iairport asks sudo once, at startup, for exactly
 // `/usr/bin/log stream --predicate 'process == "airportd"' --info --style compact`
 // and reads its stdout as the user. Nothing else runs as root, and the sudo
 // policy sees and audits that exact command.
@@ -42,11 +42,28 @@ public final class SudoLogStream {
 
     // MARK: Decision
 
-    /// True when plain `iairport` should ask sudo for `log stream` at startup.
-    public static func shouldOffer(noSudo: Bool) -> Bool {
-        guard !noSudo, geteuid() != 0, RootHelperClient.shared == nil else { return false }
-        guard isatty(STDIN_FILENO) == 1, isatty(STDERR_FILENO) == 1 else { return false }
-        return !currentUserIsAdmin()
+    public enum Decision: Equatable {
+        /// `--sudo-log` was not given, or root already runs `log stream`.
+        case none
+        /// Ask sudo now.
+        case offer
+        /// `--sudo-log` was given but cannot be honoured. The text says why.
+        case skip(String)
+    }
+
+    /// Whether `iairport --sudo-log` should ask sudo for `log stream` at startup.
+    /// Under `sudo iairport` the root helper streams the log, so the flag is
+    /// silent there.
+    public static func decide(sudoLog: Bool, stdinIsTTY: Bool = isatty(STDIN_FILENO) == 1, stderrIsTTY: Bool = isatty(STDERR_FILENO) == 1) -> Decision {
+        guard sudoLog else { return .none }
+        guard geteuid() != 0, RootHelperClient.shared == nil else { return .none }
+        guard stdinIsTTY, stderrIsTTY else {
+            return .skip("--sudo-log needs a terminal on stdin and stderr for the sudo prompt; continuing without root.")
+        }
+        if currentUserIsAdmin() {
+            return .skip("--sudo-log not needed: this account is an admin, so log stream runs without root.")
+        }
+        return .offer
     }
 
     static func currentUserIsAdmin() -> Bool {
@@ -191,7 +208,7 @@ public final class SudoLogStream {
         // Both pipes closed means sudo is exiting: reap it for the status.
         if let status = child.exitStatus(wait: !outOpen && !errOpen) {
             child.closeFDs()
-            note("sudo did not start log stream (exit \(status)); continuing without root. --no-sudo skips this prompt.")
+            note("sudo did not start log stream (exit \(status)); continuing without root.")
         } else {
             kill(child.pid, SIGTERM)
             _ = child.exitStatus(wait: true)

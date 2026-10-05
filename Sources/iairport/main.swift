@@ -76,12 +76,17 @@ case .success(let options):
     if options.debugToggle {
         exit(WdutilInfo.toggleDebug())
     }
-    // Plain `iairport` on an account that is not an admin: `log stream` needs
-    // root, so ask sudo for exactly that command, up front, while the terminal
-    // is still free for the prompt.
-    if SudoLogStream.shouldOffer(noSudo: options.noSudo) {
-        let note: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
-        note("Your account is not an admin, so iairport asks sudo to run `/usr/bin/log stream` for airportd. Only that command runs as root. Approve the prompt, or press Ctrl-C to skip. --no-sudo turns this off.")
+    // `iairport --sudo-log`: `log stream` needs root on accounts outside the
+    // admin group, so ask sudo for exactly that command, up front, while the
+    // terminal is still free for the prompt.
+    let note: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+    switch SudoLogStream.decide(sudoLog: options.sudoLog) {
+    case .none:
+        break
+    case .skip(let reason):
+        note(reason)
+    case .offer:
+        note("iairport asks sudo to run `/usr/bin/log stream` for airportd. Only that command runs as root. Approve the prompt, or press Ctrl-C to skip.")
         if SudoLogStream.start(note: note) != nil {
             note("Root log stream running: roam markers, roam reasons and join timing are on.")
         }
