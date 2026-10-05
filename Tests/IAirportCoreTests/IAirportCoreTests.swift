@@ -355,6 +355,22 @@ final class SudoProbeTests: XCTestCase {
 
 }
 
+final class MACAddressTests: XCTestCase {
+    func testPadsUnpaddedOctets() {
+        // CachedScanRecord stores BSSIDs ether_ntoa style, without leading zeros.
+        XCTAssertEqual(MACAddress.normalize("68:51:34:7c:32:1"), "68:51:34:7c:32:01")
+        XCTAssertEqual(MACAddress.normalize("0:b:86:1:2:3"), "00:0b:86:01:02:03")
+        XCTAssertEqual(MACAddress.normalize("68:51:34:7C:32:01"), "68:51:34:7c:32:01")
+    }
+
+    func testRejectsMalformedAndPlaceholders() {
+        XCTAssertNil(MACAddress.normalize("2:0:0:0:0:0"))
+        XCTAssertNil(MACAddress.normalize("68:51:34:7c:32"))
+        XCTAssertNil(MACAddress.normalize("68:51:34:7c:32:123"))
+        XCTAssertNil(MACAddress.normalize("68:51::7c:32:01"))
+    }
+}
+
 final class RendererTests: XCTestCase {
     func testStatusLineClipsToTerminalWidth() {
         let line = String(repeating: "x", count: 100)
