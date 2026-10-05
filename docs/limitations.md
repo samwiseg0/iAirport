@@ -12,6 +12,8 @@ airportd log lines redact BSSIDs without Apple's Wi-Fi logging profile. iairport
 
 The first run needs the macOS Location prompt. iairport runs in cache mode until the grant lands, then switches to live without a restart. If the dialog never appears, turn on iairport in System Settings > Privacy & Security > Location Services. If the grant is denied, iairport stays in cache mode. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`.
 
+If the toggle turns itself off again within a second, locationd could not verify the app. On the verified managed Mac, locationd logged `The given bundleId or bundlePath is not a plugin or an app` and then `Clearing client authorization for verification-failed client`. Launch Services had marked the bundle `launch-disabled` at `/usr/local/libexec` and at `~/Applications`, but not in `/Applications`. That held even for an ad-hoc signed app that Gatekeeper rejects. `make install` therefore installs to `/Applications/iairport.app`.
+
 ## Protected folders
 
 Running `build/iairport.app` from Documents, Desktop, or Downloads cannot get live SSID and BSSID. iairport prints a hint and runs in cache mode. The supported path is `sudo make install`, then `iairport`.

@@ -2,6 +2,10 @@ PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 LIBEXECDIR ?= $(PREFIX)/libexec
 DATADIR ?= $(PREFIX)/share/iairport
+# Launch Services marks app bundles outside /Applications launch-disabled on
+# some Macs. locationd then cannot verify the app and clears its Location
+# grant, so install the bundle where Launch Services treats it as an app.
+APPINSTALLDIR ?= /Applications
 CODESIGN_IDENTITY ?= -
 APPDIR := build/iairport.app
 
@@ -25,15 +29,20 @@ test:
 
 install:
 	@test -d "$(APPDIR)" || { echo "error: $(APPDIR) not found. Run 'make' first, then 'sudo make install'." >&2; exit 1; }
-	install -d "$(BINDIR)" "$(LIBEXECDIR)" "$(DATADIR)"
-	rm -rf "$(LIBEXECDIR)/iairport.app"
-	cp -R "$(APPDIR)" "$(LIBEXECDIR)/iairport.app"
-	ln -sfn "$(LIBEXECDIR)/iairport.app/Contents/MacOS/iairport" "$(BINDIR)/iairport"
+	@stale=$$(find Sources Resources Package.swift oui.txt -newer "$(APPDIR)/Contents/MacOS/iairport" -type f 2>/dev/null | head -1); \
+	if [ -n "$$stale" ]; then echo "error: $(APPDIR) is older than $$stale. Run 'make' first, then 'sudo make install'." >&2; exit 1; fi
+	install -d "$(BINDIR)" "$(APPINSTALLDIR)" "$(DATADIR)"
+	rm -rf "$(APPINSTALLDIR)/iairport.app"
+	cp -R "$(APPDIR)" "$(APPINSTALLDIR)/iairport.app"
+	ln -sfn "$(APPINSTALLDIR)/iairport.app/Contents/MacOS/iairport" "$(BINDIR)/iairport"
 	install -m 0644 oui.txt "$(DATADIR)/oui.txt"
+	@# Older installs put the bundle in $(LIBEXECDIR). Remove it so only one
+	@# bundle with this identifier stays installed.
+	rm -rf "$(LIBEXECDIR)/iairport.app"
 
 uninstall:
 	rm -f "$(BINDIR)/iairport" "$(DATADIR)/oui.txt"
-	rm -rf "$(LIBEXECDIR)/iairport.app"
+	rm -rf "$(APPINSTALLDIR)/iairport.app" "$(LIBEXECDIR)/iairport.app"
 
 clean:
 	swift package clean

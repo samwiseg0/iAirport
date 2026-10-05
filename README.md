@@ -34,7 +34,7 @@ Install it:
 sudo make install
 ```
 
-`make` builds `build/iairport.app`. `sudo make install` installs that existing bundle, `/usr/local/bin/iairport`, and `/usr/local/share/iairport/oui.txt`. Set `PREFIX=/path` if you want another prefix.
+`make` builds `build/iairport.app`. `sudo make install` installs that existing bundle to `/Applications/iairport.app`, plus `/usr/local/bin/iairport` and `/usr/local/share/iairport/oui.txt`. Set `PREFIX=/path` for another command prefix, or `APPINSTALLDIR=/path` for another app folder. Outside `/Applications`, macOS may refuse to keep the Location grant.
 
 The supported path is `sudo make install`, then `iairport`. Run the installed command, not the app from a repo clone under Documents, Desktop, or Downloads. Those protected folders stay in cache mode. The first run asks for Location permission. Click Allow. The grant is tied to the installed binary signature, so changed code asks again after `sudo make install`.
 
