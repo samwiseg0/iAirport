@@ -386,7 +386,13 @@ public final class IAirportMonitor {
             if let flushed = pendingRoamCSV.replace(transition: transition, timing: timing) {
                 csv?.writeTransition(flushed.transition, timing: flushed.timing)
             }
-            Notifier.post(title: "iairport roam", message: OutputFormatter.roamNotification(transition), enabled: options.notify)
+            Notifier.post(title: "iAirport Roam", message: OutputFormatter.roamNotification(transition), enabled: options.notify) { [weak self] line in
+                guard let self else { return }
+                self.queue.async {
+                    guard !self.shuttingDown, !self.options.json else { return }
+                    self.renderer.event(line: line, color: .yellow)
+                }
+            }
         } else {
             csv?.writeTransition(transition, timing: timing)
         }

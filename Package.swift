@@ -18,7 +18,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("SystemConfiguration"),
-                .linkedFramework("CoreLocation")
+                .linkedFramework("CoreLocation"),
+                .linkedFramework("UserNotifications")
             ]
         ),
         .executableTarget(
@@ -28,7 +29,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("SystemConfiguration"),
-                .linkedFramework("CoreLocation")
+                .linkedFramework("CoreLocation"),
+                .linkedFramework("UserNotifications")
             ]
         ),
         .testTarget(

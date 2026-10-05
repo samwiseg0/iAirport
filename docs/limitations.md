@@ -16,6 +16,8 @@ macOS keeps one Location record per app bundle id. Two installed copies with dif
 
 If the toggle turns itself off again within a second, locationd could not verify the app. On the verified managed Mac, locationd logged `The given bundleId or bundlePath is not a plugin or an app` and then `Clearing client authorization for verification-failed client`. Launch Services had marked the bundle `launch-disabled` at `/usr/local/libexec` and at `~/Applications`, but not in `/Applications`. That held even for an ad-hoc signed app that Gatekeeper rejects. On those Macs run `sudo make install APPINSTALLDIR=/Applications`. The Homebrew formula keeps its bundle in the Cellar, so it has the same problem there.
 
+The notification daemon applies the same check. A `launch-disabled` bundle gets `Failed to find or validate client` from usernoted, and roam banners fall back to osascript with Script Editor's icon. iairport prints one note when that happens. Bundles under a temp directory such as `/tmp` are always `launch-disabled`.
+
 ## Protected folders
 
 Running `build/iairport.app` from Documents, Desktop, or Downloads cannot get live SSID and BSSID. iairport prints a hint and runs in cache mode. The supported path is `sudo make install`, then `iairport`.

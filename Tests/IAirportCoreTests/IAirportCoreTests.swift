@@ -636,6 +636,15 @@ final class APNameTests: XCTestCase {
         XCTAssertTrue(line.contains("00:0b:86:11:22:01 (AP-Lobby-01) -> 00:0b:86:11:22:02 (AP-Lobby-02)"), line)
     }
 
+    func testNotificationRouteAndAction() {
+        XCTAssertEqual(NotificationDecision.route(bundleIdentifier: nil), .osascript)
+        XCTAssertEqual(NotificationDecision.route(bundleIdentifier: "io.github.samwiseg0.iairport"), .userNotifications)
+        XCTAssertEqual(NotificationDecision.action(for: .notDetermined), .requestThenPost)
+        XCTAssertEqual(NotificationDecision.action(for: .authorized), .post)
+        XCTAssertEqual(NotificationDecision.action(for: .provisional), .post)
+        XCTAssertEqual(NotificationDecision.action(for: .denied), .skip)
+    }
+
     func testResolverLearnsAndGivesUp() {
         let resolver = APNameResolver(interfaceName: "en99")
         resolver.learn(bssid: "00:0B:86:11:22:01", name: "AP-Lobby-01")

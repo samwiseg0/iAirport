@@ -38,7 +38,9 @@ iairport looks up the first three octets of the BSSID in `oui.txt`. The search s
 
 ## Notifications
 
-Roam notifications use `/usr/bin/osascript`. Notification.swift runs `display notification` with the title `iairport roam`. The text is the old and new AP name, or the BSSID when there is no name, plus the channel change. It escapes quotes before it calls the command. `--no-notify` turns this off.
+Roam notifications have the title `iAirport Roam`. The text is the old and new AP name, or the BSSID when there is no name, plus the channel change. `--no-notify` turns this off.
+
+When iairport runs from its app bundle it posts through UserNotifications, so the banner carries the iairport icon. The first roam asks for Notifications permission once. Roams that arrive while the prompt is up collapse into the latest one. Deny it and iairport posts nothing and prints one note in the terminal. A plain `.build/release/iairport` has no bundle, so it falls back to `/usr/bin/osascript` and `display notification`. That banner shows Script Editor's icon. When macOS rejects the bundle, iairport prints one note, switches to osascript for the rest of the run, and keeps the banners to one look.
 
 ## Debug logging as root
 
