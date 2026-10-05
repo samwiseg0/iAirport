@@ -9,7 +9,7 @@ APPINSTALLDIR ?= /Applications
 CODESIGN_IDENTITY ?= -
 APPDIR := build/iairport.app
 
-.PHONY: all build bundle test install uninstall clean
+.PHONY: all build bundle icon test install uninstall clean
 
 all: bundle
 
@@ -22,7 +22,12 @@ bundle: build
 	install -m 0755 .build/release/iairport "$(APPDIR)/Contents/MacOS/iairport"
 	install -m 0644 Resources/Info.plist "$(APPDIR)/Contents/Info.plist"
 	install -m 0644 oui.txt "$(APPDIR)/Contents/Resources/oui.txt"
+	install -m 0644 Resources/AppIcon.icns "$(APPDIR)/Contents/Resources/AppIcon.icns"
 	codesign -s "$(CODESIGN_IDENTITY)" -f "$(APPDIR)"
+
+# Regenerates Resources/AppIcon.icns from scripts/make-icon.swift.
+icon:
+	swift scripts/make-icon.swift Resources/AppIcon.icns
 
 test:
 	swift test

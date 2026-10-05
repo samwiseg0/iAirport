@@ -24,7 +24,8 @@ The tests cover pure logic in `IAirportCore`. They do not need root. They should
 
 - `all` runs `bundle`.
 - `build` runs `swift build -c release`.
-- `bundle` creates `build/iairport.app`.
+- `bundle` creates `build/iairport.app`, including `Resources/AppIcon.icns`.
+- `icon` regenerates `Resources/AppIcon.icns` from `scripts/make-icon.swift` (CoreGraphics and `iconutil`, no other tools).
 - `test` runs `swift test`.
 - `install` installs an existing app bundle, command symlink, and OUI file.
 - `uninstall` removes the installed app bundle, symlink, and OUI file.

@@ -4,6 +4,8 @@
 <dict>
     <key>CFBundleExecutable</key>
     <string>iairport</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.samwiseg0.iairport</string>
     <key>CFBundleName</key>
