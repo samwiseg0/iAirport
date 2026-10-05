@@ -21,7 +21,7 @@ iairport uses simple flags. Unknown flags are usage errors. Use `iairport --help
 
 ## sudo
 
-`sudo iairport` starts a root helper for `wdutil` and runs the monitor as the invoking user. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If neither path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
+`sudo iairport` starts a root helper for `wdutil` and `log stream` and runs the monitor as the invoking user. Use it when your account is not an admin, because `log stream` refuses non-admin accounts. `sudo iairport -d` uses that helper for `wdutil log`. Plain `iairport` after `sudo -v` calls `sudo -n wdutil` itself. If neither path is available, root-only fields stay blank. `-v` shows which `wdutil` path is in use.
 
 ## Exit codes
 

@@ -287,6 +287,9 @@ final class UtilityTests: XCTestCase {
         XCTAssertEqual(env["LOGNAME"], "user")
         XCTAssertEqual(env["IAIRPORT_SUDO"], "1")
         XCTAssertEqual(env["IAIRPORT_HELPER_FD"], "7")
+        XCTAssertNil(env["IAIRPORT_LOG_FD"])
+        let withLog = DropTarget.childEnvironment(base: [:], target: target, helperFD: 7, logFD: 9)
+        XCTAssertEqual(withLog["IAIRPORT_LOG_FD"], "9")
         XCTAssertEqual(env["IAIRPORT_DROP_TO"], "501:20:user:/Users/user")
         XCTAssertEqual(env["PATH"], "/usr/bin")
     }
@@ -357,6 +360,85 @@ final class SudoProbeTests: XCTestCase {
         XCTAssertTrue(LogStreamTail.isPermanentFailure("log: Must be admin to run 'stream' command"))
         XCTAssertFalse(LogStreamTail.isPermanentFailure(nil))
         XCTAssertFalse(LogStreamTail.isPermanentFailure("Filtering the log data using \"process == airportd\""))
+    }
+}
+
+final class RootLogStreamTests: XCTestCase {
+    private func readAll(_ fd: Int32, timeout: TimeInterval) -> (data: Data, eof: Bool) {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let count = read(fd, &buffer, buffer.count)
+            if count > 0 { data.append(contentsOf: buffer[0..<count]); continue }
+            if count == 0 { return (data, true) }
+            usleep(20_000)
+        }
+        return (data, false)
+    }
+
+    func testProtocolAcceptsLogStream() {
+        XCTAssertEqual(RootHelperProtocol.encodeRequest(["log-stream"]), Data("log-stream\n".utf8))
+        XCTAssertEqual(RootHelperProtocol.parseRequest("log-stream\n"), ["log-stream"])
+        XCTAssertNil(RootHelperProtocol.parseRequest("log-stream extra\n"))
+    }
+
+    func testResponseRouting() {
+        XCTAssertEqual(RootHelperServer.response(for: "log-stream", logStreamer: nil), RootHelperProtocol.encodeResponse(status: 1, output: Data()))
+        XCTAssertEqual(RootHelperServer.response(for: "rm -rf /", logStreamer: nil), RootHelperProtocol.encodeResponse(status: 2, output: Data()))
+        let info = RootHelperServer.response(for: "info", logStreamer: nil, wdutil: { _ in (Data("x".utf8), 0) })
+        XCTAssertEqual(info, RootHelperProtocol.encodeResponse(status: 0, output: Data("x".utf8)))
+    }
+
+    func testStreamerWritesThenStopClosesPipe() {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&fds), 0)
+        defer { close(fds[0]) }
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/bin/sh", arguments: ["-c", "echo one; echo two; exec sleep 30"])
+        XCTAssertTrue(streamer.start())
+        XCTAssertTrue(streamer.start())
+        XCTAssertEqual(String(decoding: readAll(fds[0], timeout: 1).data, as: UTF8.self), "one\ntwo\n")
+        streamer.stop()
+        XCTAssertTrue(readAll(fds[0], timeout: 3).eof)
+        XCTAssertFalse(streamer.start())
+    }
+
+    func testStreamerGivesUpAndClosesPipe() {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&fds), 0)
+        defer { close(fds[0]) }
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/usr/bin/false", arguments: [], maxAttempts: 1)
+        _ = streamer.start()
+        XCTAssertTrue(readAll(fds[0], timeout: 5).eof)
+    }
+
+    func testTailReadsHelperStream() {
+        var sock: [Int32] = [-1, -1]
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &sock), 0)
+        XCTAssertEqual(pipe(&fds), 0)
+        let streamer = RootLogStreamer(writeFD: fds[1], executable: "/bin/sh", arguments: ["-c", "sleep 0.2; echo line A; echo line B; exec sleep 30"])
+        let serverFD = sock[0]
+        Thread.detachNewThread {
+            while let line = FDIO.readLine(serverFD) {
+                guard FDIO.writeAll(serverFD, RootHelperServer.response(for: line, logStreamer: streamer)) else { break }
+            }
+            close(serverFD)
+            streamer.stop()
+        }
+        let queue = DispatchQueue(label: "test.state")
+        let received = expectation(description: "two lines")
+        var lines: [String] = []
+        let tail = LogStreamTail(queue: queue, renderer: Renderer(noColor: true, jsonMode: false), helper: RootHelperClient(fd: sock[1], logFD: fds[0])) { line in
+            lines.append(line)
+            if lines.count == 2 { received.fulfill() }
+        }
+        queue.async { tail.start() }
+        wait(for: [received], timeout: 5)
+        XCTAssertEqual(lines, ["line A", "line B"])
+        queue.sync { tail.stop() }
+        close(sock[1])
     }
 }
 

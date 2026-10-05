@@ -18,7 +18,7 @@ Running `build/iairport.app` from Documents, Desktop, or Downloads cannot get li
 
 ## Root and sudo
 
-Root has no Location grant, so `sudo iairport` runs the monitor as the invoking user and keeps root only for `wdutil`.
+Root has no Location grant, so `sudo iairport` runs the monitor as the invoking user and keeps root only for `wdutil` and `log stream`.
 
 ## CachedScanRecord
 
@@ -26,7 +26,7 @@ Root has no Location grant, so `sudo iairport` runs the monitor as the invoking 
 
 ## log stream needs admin
 
-`log stream` refuses to run for accounts that are not in the `admin` group. On such accounts iairport prints one warning and runs without airportd log events. Roam markers, roam reasons and join timing stay blank. BSSIDs in those lines stay redacted either way.
+`log stream` refuses to run for accounts that are not in the `admin` group. On such accounts iairport prints one warning and runs without airportd log events. Roam markers, roam reasons and join timing stay blank. `sudo iairport` fixes this: the root helper runs `log stream` and passes its output to the monitor. BSSIDs in those lines stay redacted either way.
 
 ## CoreWLAN callbacks
 

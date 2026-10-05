@@ -6,12 +6,18 @@ import Darwin
 // ties its ticket to the tty, so the user process cannot call `sudo -n`.
 // The root process therefore stays alive as a wdutil helper and spawns the
 // user process with one end of a socketpair.
+//
+// `log stream` refuses non-admin accounts, so the helper can also run it as
+// root. The user process inherits the read end of a pipe at spawn and sends
+// `log-stream` once to start it. The command and predicate are fixed here.
 
 /// Wire format between the user process and the root helper.
 /// Request: wdutil arguments joined by spaces, one line.
 /// Response: "<status> <byteCount>\n" then byteCount bytes of wdutil output.
 public enum RootHelperProtocol {
-    public static let allowedCommands: [[String]] = [["info"], ["log"], ["log", "+wifi"], ["log", "-wifi"]]
+    /// Starts the root `log stream` into the inherited log pipe. Not a wdutil command.
+    public static let logStreamCommand = ["log-stream"]
+    public static let allowedCommands: [[String]] = [["info"], ["log"], ["log", "+wifi"], ["log", "-wifi"], logStreamCommand]
 
     public static func encodeRequest(_ arguments: [String]) -> Data? {
         guard allowedCommands.contains(arguments) else { return nil }
@@ -68,10 +74,11 @@ public struct DropTarget: Equatable {
     /// Environment for the user child: the parent's environment plus the
     /// helper fd and the user's identity. HOME matters because NSHomeDirectory
     /// drives the protected-folder hint.
-    public static func childEnvironment(base: [String: String], target: DropTarget, helperFD: Int32) -> [String: String] {
+    public static func childEnvironment(base: [String: String], target: DropTarget, helperFD: Int32, logFD: Int32? = nil) -> [String: String] {
         var env = base
         env["IAIRPORT_SUDO"] = "1"
         env[RootHelperClient.environmentKey] = String(helperFD)
+        if let logFD { env[RootHelperClient.logEnvironmentKey] = String(logFD) }
         env[environmentKey] = target.encoded
         env["HOME"] = target.home
         env["USER"] = target.user
@@ -137,17 +144,33 @@ enum FDIO {
 /// exchange at a time.
 public final class RootHelperClient {
     public static let environmentKey = "IAIRPORT_HELPER_FD"
+    public static let logEnvironmentKey = "IAIRPORT_LOG_FD"
     public static let shared: RootHelperClient? = {
         guard let raw = getenv(environmentKey), let fd = Int32(String(cString: raw)) else { return nil }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
-        return RootHelperClient(fd: fd)
+        var logFD: Int32?
+        if let rawLog = getenv(logEnvironmentKey), let value = Int32(String(cString: rawLog)), fcntl(value, F_GETFD) >= 0 {
+            _ = fcntl(value, F_SETFD, FD_CLOEXEC)
+            logFD = value
+        }
+        return RootHelperClient(fd: fd, logFD: logFD)
     }()
 
     private let fd: Int32
+    private let logFD: Int32?
     private let lock = NSLock()
 
-    public init(fd: Int32) {
+    public init(fd: Int32, logFD: Int32? = nil) {
         self.fd = fd
+        self.logFD = logFD
+    }
+
+    /// Asks the helper to start `log stream` as root. Returns the fd that
+    /// carries its output, or nil when the helper has no log pipe or refused.
+    public func startLogStream() -> Int32? {
+        guard let logFD else { return nil }
+        let result = run(arguments: RootHelperProtocol.logStreamCommand)
+        return result.status == 0 ? logFD : nil
     }
 
     public func run(arguments: [String]) -> (text: String?, status: Int32) {
@@ -171,7 +194,7 @@ public enum RootHelperServer {
         case spawn(Int32)
     }
 
-    public static func launchUserChild(executable: String, arguments: [String], uid: uid_t) -> Result<(pid: pid_t, fd: Int32), LaunchError> {
+    public static func launchUserChild(executable: String, arguments: [String], uid: uid_t) -> Result<(pid: pid_t, fd: Int32, logWriteFD: Int32?), LaunchError> {
         guard let target = DropTarget.lookup(uid: uid) else { return .failure(.noPasswdEntry) }
         var pair: [Int32] = [-1, -1]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { return .failure(.socketpair(errno)) }
@@ -179,7 +202,13 @@ public enum RootHelperServer {
         let childFD = pair[1]
         _ = fcntl(parentFD, F_SETFD, FD_CLOEXEC)
 
-        let env = DropTarget.childEnvironment(base: ProcessInfo.processInfo.environment, target: target, helperFD: childFD)
+        // Log pipe: the child inherits the read end, root keeps the write end.
+        // Without a pipe the child falls back to its own `log stream`.
+        var logPipe: [Int32] = [-1, -1]
+        let hasLogPipe = pipe(&logPipe) == 0
+        if hasLogPipe { _ = fcntl(logPipe[1], F_SETFD, FD_CLOEXEC) }
+
+        let env = DropTarget.childEnvironment(base: ProcessInfo.processInfo.environment, target: target, helperFD: childFD, logFD: hasLogPipe ? logPipe[0] : nil)
         var argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) }
         argv.append(nil)
         var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") }
@@ -192,14 +221,16 @@ public enum RootHelperServer {
         var pid: pid_t = 0
         let rc = posix_spawn(&pid, executable, nil, nil, argv, envp)
         close(childFD)
+        if hasLogPipe { close(logPipe[0]) }
         guard rc == 0 else {
             close(parentFD)
+            if hasLogPipe { close(logPipe[1]) }
             return .failure(.spawn(rc))
         }
-        return .success((pid, parentFD))
+        return .success((pid, parentFD, hasLogPipe ? logPipe[1] : nil))
     }
 
-    public static func serve(fd: Int32, childPID: pid_t) -> Never {
+    public static func serve(fd: Int32, childPID: pid_t, logWriteFD: Int32? = nil) -> Never {
         // The terminal delivers SIGINT to the whole group; the child handles it
         // and closes the socket. Forward the signals that target only this pid.
         signal(SIGINT, SIG_IGN)
@@ -215,23 +246,31 @@ public enum RootHelperServer {
             return source
         }
         defer { _ = forwarders }
+        let logStreamer = logWriteFD.map { RootLogStreamer(writeFD: $0) }
 
         while let line = FDIO.readLine(fd) {
-            let response: Data
-            if let arguments = RootHelperProtocol.parseRequest(line) {
-                let result = runWdutil(arguments)
-                response = RootHelperProtocol.encodeResponse(status: result.status, output: result.output)
-            } else {
-                response = RootHelperProtocol.encodeResponse(status: 2, output: Data())
-            }
-            guard FDIO.writeAll(fd, response) else { break }
+            guard FDIO.writeAll(fd, response(for: line, logStreamer: logStreamer)) else { break }
         }
         close(fd)
+        logStreamer?.stop()
 
         var status: Int32 = 0
         while waitpid(childPID, &status, 0) < 0 && errno == EINTR {}
         let signaled = status & 0x7f
         exit(signaled == 0 ? (status >> 8) & 0xff : 128 + signaled)
+    }
+
+    /// Answers one request line. Status 2 means the request is not allowed.
+    static func response(for line: String, logStreamer: RootLogStreamer?, wdutil: ([String]) -> (output: Data, status: Int32) = runWdutil) -> Data {
+        guard let arguments = RootHelperProtocol.parseRequest(line) else {
+            return RootHelperProtocol.encodeResponse(status: 2, output: Data())
+        }
+        if arguments == RootHelperProtocol.logStreamCommand {
+            let started = logStreamer?.start() ?? false
+            return RootHelperProtocol.encodeResponse(status: started ? 0 : 1, output: Data())
+        }
+        let result = wdutil(arguments)
+        return RootHelperProtocol.encodeResponse(status: result.status, output: result.output)
     }
 
     private static func runWdutil(_ arguments: [String]) -> (output: Data, status: Int32) {
@@ -249,5 +288,102 @@ public enum RootHelperServer {
         } catch {
             return (Data(), 1)
         }
+    }
+}
+
+/// Root side. Runs `/usr/bin/log stream` for airportd into the user's pipe.
+/// Restarts it with backoff. When it gives up it closes the pipe, so the user
+/// process reads EOF and continues without log events.
+final class RootLogStreamer {
+    private let writeFD: Int32
+    private let executable: String
+    private let arguments: [String]
+    private let maxAttempts: Int
+    private let queue = DispatchQueue(label: "iairport.root-log-stream")
+    private var process: Process?
+    private var started = false
+    private var stopping = false
+    private var closed = false
+    private var attempts = 0
+    private var launchedAt = Date()
+
+    init(writeFD: Int32, executable: String = "/usr/bin/log", arguments: [String] = LogStreamTail.streamArguments, maxAttempts: Int = 5) {
+        self.writeFD = writeFD
+        self.executable = executable
+        self.arguments = arguments
+        self.maxAttempts = maxAttempts
+    }
+
+    /// Starts the stream once. Later calls report whether it is still alive.
+    func start() -> Bool {
+        queue.sync {
+            guard !closed, !stopping else { return false }
+            if started { return true }
+            started = true
+            return launch()
+        }
+    }
+
+    func stop() {
+        let running: Process? = queue.sync {
+            stopping = true
+            return process
+        }
+        if let running, running.isRunning {
+            // The helper ignores SIGTERM, and the child may inherit that, so
+            // fall back to SIGKILL.
+            let pid = running.processIdentifier
+            kill(pid, SIGTERM)
+            let limit = Date().addingTimeInterval(1)
+            while running.isRunning && Date() < limit { usleep(20_000) }
+            if running.isRunning { kill(pid, SIGKILL) }
+        }
+        queue.sync { closePipe() }
+    }
+
+    // Runs on `queue`.
+    private func launch() -> Bool {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: executable)
+        child.arguments = arguments
+        child.standardInput = FileHandle.nullDevice
+        child.standardOutput = FileHandle(fileDescriptor: writeFD, closeOnDealloc: false)
+        child.standardError = FileHandle.nullDevice
+        child.terminationHandler = { [weak self] _ in
+            self?.queue.async { self?.handleExit() }
+        }
+        do {
+            try child.run()
+        } catch {
+            closePipe()
+            return false
+        }
+        process = child
+        launchedAt = Date()
+        return true
+    }
+
+    // Runs on `queue`.
+    private func handleExit() {
+        process = nil
+        guard !stopping, !closed else { return }
+        if Date().timeIntervalSince(launchedAt) > 60 { attempts = 0 }
+        attempts += 1
+        guard attempts <= maxAttempts else {
+            closePipe()
+            return
+        }
+        let delay = min(1 << (attempts - 1), 8)
+        queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+            guard let self, !self.stopping, !self.closed else { return }
+            _ = self.launch()
+        }
+    }
+
+    // Runs on `queue`.
+    private func closePipe() {
+        guard !closed else { return }
+        closed = true
+        close(writeFD)
     }
 }

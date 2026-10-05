@@ -51,14 +51,14 @@ if geteuid() == 0,
     }
 }
 
-// `sudo iairport`: stay root as the wdutil helper and run the monitor as the user.
+// `sudo iairport`: stay root as the wdutil and log stream helper and run the monitor as the user.
 if geteuid() == 0,
    let sudoUID = getenv("SUDO_UID").flatMap({ uid_t(String(cString: $0)) }),
    sudoUID != 0,
    getenv("IAIRPORT_SUDO") == nil {
     switch RootHelperServer.launchUserChild(executable: executablePath, arguments: launchArguments, uid: sudoUID) {
     case .success(let child):
-        RootHelperServer.serve(fd: child.fd, childPID: child.pid)
+        RootHelperServer.serve(fd: child.fd, childPID: child.pid, logWriteFD: child.logWriteFD)
     case .failure(let error):
         FileHandle.standardError.write(Data("warning: could not start the user-level monitor (\(error)); running as root in cache mode\n".utf8))
     }

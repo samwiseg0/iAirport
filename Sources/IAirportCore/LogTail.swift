@@ -2,32 +2,60 @@ import Foundation
 import Darwin
 
 public final class LogStreamTail {
+    /// Arguments for `/usr/bin/log`. The root helper uses the same ones.
+    static let streamArguments = ["stream", "--predicate", "process == \"airportd\"", "--info", "--style", "compact"]
+
     private let queue: DispatchQueue
     private let renderer: Renderer
     private let onLine: (String) -> Void
+    private let helper: RootHelperClient?
     private var process: Process?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
+    private var helperHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var stderrBuffer = Data()
     private var stopping = false
     private var restartAttempts = 0
     private var lastErrorLine: String?
 
-    public init(queue: DispatchQueue, renderer: Renderer, onLine: @escaping (String) -> Void) {
+    public init(queue: DispatchQueue, renderer: Renderer, helper: RootHelperClient? = RootHelperClient.shared, onLine: @escaping (String) -> Void) {
         self.queue = queue
         self.renderer = renderer
+        self.helper = helper
         self.onLine = onLine
     }
 
     public func start() {
         stopping = false
         restartAttempts = 0
-        launch()
+        guard let helper else {
+            launch()
+            return
+        }
+        // Under `sudo iairport` the root helper runs `log stream`, because the
+        // invoking user may not be an admin. The request is a socket round trip
+        // that can queue behind a wdutil call, so keep it off the state queue.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fd = helper.startLogStream()
+            self?.queue.async {
+                guard let self, !self.stopping else { return }
+                if let fd {
+                    self.attachHelperStream(fd: fd)
+                } else {
+                    self.launch()
+                }
+            }
+        }
     }
 
     public func stop() {
         stopping = true
+        if let helperHandle {
+            helperHandle.readabilityHandler = nil
+            try? helperHandle.close()
+            self.helperHandle = nil
+        }
         guard let process else { return }
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
@@ -47,10 +75,32 @@ public final class LogStreamTail {
         stderrPipe = nil
     }
 
+    // Reads the root helper's `log stream` output. The helper restarts the
+    // stream itself, so EOF here means it gave up.
+    private func attachHelperStream(fd: Int32) {
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        helperHandle = handle
+        handle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                self?.queue.async { self?.handleHelperEOF() }
+                return
+            }
+            self?.queue.async { self?.append(data: data, isError: false) }
+        }
+    }
+
+    private func handleHelperEOF() {
+        guard !stopping else { return }
+        helperHandle = nil
+        renderer.event(line: "warning: root log stream ended; continuing without log events", color: .yellow)
+    }
+
     private func launch() {
         let child = Process()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        child.arguments = ["stream", "--predicate", "process == \"airportd\"", "--info", "--style", "compact"]
+        child.arguments = Self.streamArguments
         let stdout = Pipe()
         let stderr = Pipe()
         stdoutPipe = stdout
@@ -129,7 +179,7 @@ public final class LogStreamTail {
         stderrPipe = nil
         if Self.isPermanentFailure(lastErrorLine) {
             let reason = lastErrorLine.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
+            renderer.event(line: "warning: log stream unavailable (\(reason)). It needs an admin account. Run `sudo iairport` to stream it as root. Continuing without airportd log events: roam markers, roam reasons and join timing stay blank.", color: .yellow)
             return
         }
         restartAttempts += 1
