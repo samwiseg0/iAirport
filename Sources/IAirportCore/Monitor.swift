@@ -19,6 +19,9 @@ public final class IAirportMonitor {
     private let promptPending: Bool
     private var cacheWarningPrinted = false
     private var liveSourceLinePrinted = false
+    /// Set when the BSSID source just moved from cache to live. The next
+    /// sample checks the cached BSSID against the live one before committing.
+    private var liveSwitchPending = false
     public var onLiveSourceLost: (() -> Bool)?
     private var wdutilPrivilege: WdutilInfo.Privilege = .unavailable
     private var wdutilHintPrinted = false
@@ -255,6 +258,10 @@ public final class IAirportMonitor {
             let changed = association.currentAssociation?.bssid != bssid
             sample.apName = apNames.resolve(bssid, force: changed, now: sample.timestamp)
         }
+        if liveSwitchPending {
+            liveSwitchPending = false
+            correctStaleCacheAssociation(sample: sample)
+        }
         let beforeIP = lastObservedIP
         let transition = association.commit(.from(sample: sample), at: sample.timestamp)
         if transition != nil {
@@ -296,16 +303,49 @@ public final class IAirportMonitor {
     private func recheckLiveSourceIfNeeded() {
         guard bssidSource == .cache, canRecheckLiveSource, linkReader.liveBSSIDAvailable() else { return }
         bssidSource = .live
+        liveSwitchPending = true
         if !liveSourceLinePrinted {
             liveSourceLinePrinted = true
             writeEvent("Live SSID/BSSID available.", color: .cyan, type: "log")
         }
     }
 
+    // The scan cache can lag the real association. When the first live sample
+    // names another BSSID than the cached one, the link did not move; the
+    // cache was stale. Replace the association and its history row instead of
+    // reporting a roam.
+    private func correctStaleCacheAssociation(sample: LinkSample) {
+        guard sample.status == .associated, let live = sample.bssid, live != "?",
+              let old = association.currentAssociation, old.bssidSource == .cache, old.bssid != live,
+              // A cache-mode `ROAM old -> ?` already reported a move away from
+              // old. The normal commit resolves it with the live BSSID.
+              unresolvedCacheRoamFrom != old.bssid,
+              case .associated(let info) = AssociationSnapshot.from(sample: sample) else { return }
+        association.rebaseline(info)
+        if let index = currentHistoryIndex, history.indices.contains(index) {
+            history[index].bssid = info.bssid
+            history[index].apName = info.apName
+            history[index].vendor = sample.vendor
+            history[index].channel = info.channel
+        }
+        if !history.contains(where: { $0.bssid == old.bssid }) {
+            distinctBSSIDs.remove(old.bssid)
+        }
+        distinctBSSIDs.insert(info.bssid)
+        csv?.writeBSSID(info.bssid)
+        let name = info.apName.map { " \"\($0)\"" } ?? ""
+        let message = "BSSID is \(info.bssid)\(name); the scan cache said \(old.bssid). Corrected, not counted as a roam."
+        var extra: [String: Any] = ["cached_bssid": old.bssid, "bssid": info.bssid]
+        if let apName = info.apName { extra["ap_name"] = apName }
+        let json = OutputFormatter.eventJSON(type: "bssid_correction", message: message, date: sample.timestamp, time: time, extra: extra)
+        writeEvent(message, color: .cyan, type: "bssid_correction", json: json)
+    }
+
     // airportd answers the first BSSID request from a stale grant when the binary
     // changed, then withholds every later one. Fall back to the cache and ask again.
     private func downgradeToCacheSource() {
         bssidSource = .cache
+        liveSwitchPending = false
         cacheReason = .noGrant
         canRecheckLiveSource = true
         liveSourceLinePrinted = false
