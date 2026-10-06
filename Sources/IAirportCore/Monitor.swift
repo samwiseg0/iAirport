@@ -122,7 +122,7 @@ public final class IAirportMonitor {
             }
             return
         }
-        renderer.event(line: "iairport v2.1.2 (Swift rewrite of iAirport by Guillaume Germain)")
+        renderer.event(line: "iairport v2.2.0 (Swift rewrite of iAirport by Guillaume Germain)")
         renderer.event(line: macOSLine())
         renderer.event(line: "interface \(interfaceName)")
         if let path = sessionLog?.path {
