@@ -124,16 +124,18 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
     private let interfaceName: String
     private let executablePath: String?
     private let jsonMode: Bool
+    private let sessionLog: SessionLog?
     private let manager = CLLocationManager()
     private var completion: ((LocationGateResult) -> Void)?
     private var completed = false
     private var handshakeTried = false
     private var promptRequested = false
     private var promptPollScheduled = false
-    public init(interfaceName: String, executablePath: String?, jsonMode: Bool = false) {
+    public init(interfaceName: String, executablePath: String?, jsonMode: Bool = false, sessionLog: SessionLog? = nil) {
         self.interfaceName = interfaceName
         self.executablePath = executablePath
         self.jsonMode = jsonMode
+        self.sessionLog = sessionLog
         super.init()
         manager.delegate = self
     }
@@ -181,6 +183,7 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
             promptRequested = true
             // JSON consumers read stdout line by line, so the prompt note goes to stderr there.
             let note = "Waiting for the Location prompt. Click Allow so iairport can read the SSID and BSSID. Running in cache mode until then."
+            sessionLog?.write(note)
             if jsonMode {
                 FileHandle.standardError.write(Data((note + "\n").utf8))
             } else {

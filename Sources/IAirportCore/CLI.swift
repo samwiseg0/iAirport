@@ -12,6 +12,8 @@ public struct RunOptions: Equatable {
     public var interval: TimeInterval = 1.0
     public var help = false
     public var sudoLog = false
+    public var sessionLog = true
+    public var logDirectory: String?
 
     public init() {}
 }
@@ -35,6 +37,11 @@ public enum CLIParser {
             case "--no-notify": options.notify = false
             case "--no-color": options.noColor = true
             case "--sudo-log": options.sudoLog = true
+            case "--no-session-log": options.sessionLog = false
+            case "--log-dir":
+                index += 1
+                guard index < arguments.count else { return .failure("missing value for --log-dir") }
+                options.logDirectory = (arguments[index] as NSString).expandingTildeInPath
             case "--json":
                 options.json = true
                 options.noColor = true
@@ -64,17 +71,19 @@ public enum CLIParser {
     public static func helpText() -> String {
         """
 iairport [options]
-  -v, --verbose      print extra airportd lines and IP tags
-  -l, --log          write iairport-samples.csv, iairport-roams.csv and bssid_list.txt
-  -d, --debug        toggle Wi-Fi debug logging and exit. Root required
-  -i, --interface X  Wi-Fi interface. Default is the CoreWLAN interface
-      --oui PATH     path to oui.txt
-      --no-notify    do not post macOS notifications on roam
-      --no-color     plain output
-      --sudo-log     ask sudo once at startup to run log stream as root
-      --json         write newline-delimited JSON
-      --interval N   sample interval in seconds. Default is 1
-  -h, --help         show help
+  -v, --verbose         print extra airportd lines and IP tags
+  -l, --log             write iairport-samples.csv, iairport-roams.csv and bssid_list.txt
+  -d, --debug           toggle Wi-Fi debug logging and exit. Root required
+  -i, --interface X     Wi-Fi interface. Default is the CoreWLAN interface
+      --oui PATH        path to oui.txt
+      --no-notify       do not post macOS notifications on roam
+      --no-color        plain output
+      --no-session-log  do not write the session log under ~/Library/Logs/iairport
+      --log-dir PATH    folder for the session log. Default is ~/Library/Logs/iairport
+      --sudo-log        ask sudo once at startup to run log stream as root
+      --json            write newline-delimited JSON
+      --interval N      sample interval in seconds. Default is 1
+  -h, --help            show help
 """
     }
 }

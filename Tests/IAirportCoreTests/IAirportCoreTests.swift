@@ -525,6 +525,27 @@ final class SudoLogStreamTests: XCTestCase {
         XCTAssertFalse(plain.sudoLog)
     }
 
+    func testCLISessionLogFlag() {
+        guard case .success(let disabled) = CLIParser.parse(["--no-session-log"]) else { return XCTFail() }
+        XCTAssertFalse(disabled.sessionLog)
+        guard case .success(let plain) = CLIParser.parse([]) else { return XCTFail() }
+        XCTAssertTrue(plain.sessionLog)
+    }
+
+    func testCLILogDirectory() {
+        guard case .success(let custom) = CLIParser.parse(["--log-dir", "/tmp/x"]) else { return XCTFail() }
+        XCTAssertEqual(custom.logDirectory, "/tmp/x")
+
+        guard case .success(let plain) = CLIParser.parse([]) else { return XCTFail() }
+        XCTAssertNil(plain.logDirectory)
+
+        XCTAssertEqual(CLIParser.parse(["--log-dir"]), .failure("missing value for --log-dir"))
+
+        guard case .success(let expanded) = CLIParser.parse(["--log-dir", "~/x"]) else { return XCTFail() }
+        XCTAssertTrue(expanded.logDirectory?.hasPrefix(NSHomeDirectory()) == true)
+        XCTAssertTrue(expanded.logDirectory?.hasSuffix("/x") == true)
+    }
+
     func testSudoLogDecision() {
         XCTAssertEqual(SudoLogStream.decide(sudoLog: false, stdinIsTTY: true, stderrIsTTY: true), .none)
         guard case .skip = SudoLogStream.decide(sudoLog: true, stdinIsTTY: false, stderrIsTTY: true) else { return XCTFail("no tty must skip") }
@@ -555,6 +576,80 @@ final class MACAddressTests: XCTestCase {
     }
 }
 
+final class SessionLogTests: XCTestCase {
+    func testFileNameUsesLocalTimeAndOptionalPID() throws {
+        let date = try fixedDate()
+        XCTAssertEqual(SessionLog.fileName(for: date), "iairport-20261005-202519.log")
+        XCTAssertEqual(SessionLog.fileName(for: date, pid: 1234), "iairport-20261005-202519-1234.log")
+    }
+
+    func testOpenWritesHeaderAndAvoidsClobbering() throws {
+        let directory = try makeWorkDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let now = try fixedDate()
+
+        guard case .success(let first) = SessionLog.open(directory: directory, now: now, arguments: ["-v"]) else {
+            return XCTFail("expected first session log")
+        }
+        let firstPath = first.path
+        first.write("hello")
+        first.close()
+        let firstText = try String(contentsOfFile: firstPath, encoding: .utf8)
+        XCTAssertTrue(firstText.hasPrefix("iairport session log  started "))
+        XCTAssertTrue(firstText.contains("args: -v"))
+        XCTAssertTrue(firstText.hasSuffix("hello\n"))
+
+        guard case .success(let second) = SessionLog.open(directory: directory, now: now, arguments: []) else {
+            return XCTFail("expected second session log")
+        }
+        let secondPath = second.path
+        second.close()
+        XCTAssertNotEqual(firstPath, secondPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstPath))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondPath))
+    }
+
+    func testOpenFailureReportsReason() {
+        guard case .failure(let error) = SessionLog.open(directory: "/dev/null/nope", now: Date(), arguments: []) else {
+            return XCTFail("expected failure")
+        }
+        XCTAssertFalse(error.reason.isEmpty)
+    }
+
+    func testOpenCreatesIntermediateDirectories() throws {
+        let root = try makeWorkDirectory()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let directory = (root as NSString).appendingPathComponent("nested/deeper")
+
+        guard case .success(let log) = SessionLog.open(directory: directory, now: try fixedDate(), arguments: []) else {
+            return XCTFail("expected session log")
+        }
+        defer { log.close() }
+
+        XCTAssertTrue(log.path.hasPrefix(directory + "/"))
+    }
+
+    private func fixedDate() throws -> Date {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = .current
+        components.year = 2026
+        components.month = 10
+        components.day = 5
+        components.hour = 20
+        components.minute = 25
+        components.second = 19
+        return try XCTUnwrap(components.date)
+    }
+
+    private func makeWorkDirectory() throws -> String {
+        let root = (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(".build/session-log-tests")
+        let directory = (root as NSString).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        return directory
+    }
+}
+
 final class RendererTests: XCTestCase {
     func testStatusLineClipsToTerminalWidth() {
         let line = String(repeating: "x", count: 100)
@@ -563,6 +658,27 @@ final class RendererTests: XCTestCase {
         XCTAssertEqual(Renderer.clip(line, toColumns: 101), line)
         XCTAssertEqual(Renderer.clip(line, toColumns: nil), line)
         XCTAssertEqual(Renderer.clip(line, toColumns: 1), line)
+    }
+
+    func testSessionLogReceivesPlainRendererLines() throws {
+        let root = (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(".build/session-log-tests")
+        let directory = (root as NSString).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+
+        guard case .success(let log) = SessionLog.open(directory: directory, now: Date(), arguments: []) else {
+            return XCTFail("expected session log")
+        }
+        let renderer = Renderer(noColor: false, jsonMode: false)
+        renderer.sessionLog = log
+        renderer.event(line: "x", color: .red, bold: true)
+        renderer.status(line: "s", color: .green)
+        log.close()
+
+        let text = try String(contentsOfFile: log.path, encoding: .utf8)
+        XCTAssertTrue(text.contains("\nx\n"))
+        XCTAssertTrue(text.contains("\ns\n"))
+        XCTAssertFalse(text.contains("\u{001B}"))
     }
 }
 

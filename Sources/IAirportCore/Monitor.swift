@@ -6,6 +6,8 @@ public final class IAirportMonitor {
     private let interfaceName: String
     private let queue = DispatchQueue(label: "iairport.state")
     private let renderer: Renderer
+    private let sessionLog: SessionLog?
+    private let sessionLogWarning: String?
     private let time = TimeFormatter()
     private let oui: OUI
     private let ouiWarning: String?
@@ -64,10 +66,13 @@ public final class IAirportMonitor {
     private var firstWithheldAt: Date?
     private var withheldRecheckScheduled = false
 
-    public init(options: RunOptions, executablePath: String?, locationGate: LocationGateResult) {
+    public init(options: RunOptions, executablePath: String?, locationGate: LocationGateResult, sessionLog: SessionLog? = nil, sessionLogWarning: String? = nil) {
         self.options = options
         interfaceName = options.interfaceName ?? LinkReader.defaultInterfaceName()
         renderer = Renderer(noColor: options.noColor, jsonMode: options.json)
+        renderer.sessionLog = sessionLog
+        self.sessionLog = sessionLog
+        self.sessionLogWarning = sessionLogWarning
         bssidSource = locationGate.source
         cacheReason = locationGate.cacheReason
         canRecheckLiveSource = locationGate.canRecheck
@@ -110,10 +115,22 @@ public final class IAirportMonitor {
     }
 
     private func printHeader() {
-        guard !options.json else { return }
+        if options.json {
+            if let sessionLogWarning {
+                let message = "warning: session log unavailable (\(sessionLogWarning))"
+                renderer.json(OutputFormatter.eventJSON(type: "log", message: message, date: Date(), time: time))
+            }
+            return
+        }
         renderer.event(line: "iairport v2.1.2 (Swift rewrite of iAirport by Guillaume Germain)")
         renderer.event(line: macOSLine())
         renderer.event(line: "interface \(interfaceName)")
+        if let path = sessionLog?.path {
+            renderer.event(line: "Session log: \(path)")
+        }
+        if let sessionLogWarning {
+            renderer.event(line: "warning: session log unavailable (\(sessionLogWarning))", color: .yellow)
+        }
         if let ouiWarning { renderer.event(line: "warning: \(ouiWarning)", color: .yellow) }
         if options.log {
             renderer.event(line: "Logging to iairport-samples.csv, iairport-roams.csv and bssid_list.txt")
@@ -727,6 +744,7 @@ public final class IAirportMonitor {
         flushPendingRoamCSVWithoutIP()
         csv?.close()
         printSummary()
+        sessionLog?.close()
         fflush(stdout)
         exit(0)
     }
@@ -758,10 +776,13 @@ public final class IAirportMonitor {
                 renderer.event(line: entry.line(time: time, now: now), redrawStatus: false)
             }
         }
+        if let path = sessionLog?.path {
+            renderer.event(line: "log \(path)", redrawStatus: false)
+        }
     }
 
     private func summaryJSON() -> [String: Any] {
-        [
+        var object: [String: Any] = [
             "type": "summary",
             "ts": time.json(Date()),
             "roams": roams,
@@ -769,6 +790,10 @@ public final class IAirportMonitor {
             "disconnects": disconnects,
             "distinct_bssids": distinctBSSIDs.count
         ]
+        if let path = sessionLog?.path {
+            object["log"] = path
+        }
+        return object
     }
 
     private func macOSLine() -> String {

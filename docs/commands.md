@@ -13,12 +13,18 @@ iairport uses simple flags. Unknown flags are usage errors. Use `iairport --help
 | `--oui PATH` | Search path | Load the OUI database from a specific path. |
 | `--no-notify` | Notifications on | Skip macOS roam notifications. |
 | `--no-color` | Auto | Disable ANSI color. Non-TTY output also disables color. |
+| `--no-session-log` | Session log on | Skip the session log file. |
+| `--log-dir PATH` | `~/Library/Logs/iairport` | Put the session log in this folder. |
 | `--json` | Off | Write newline-delimited JSON. This also disables color. |
 | `--interval N` | `1` | Set the sample interval in seconds. |
 | `--sudo-log` | Off | Ask sudo once at startup to run `log stream` as root. |
 | `-h`, `--help` | Off | Show help and exit. |
 
 `--interval` accepts only finite positive values up to 86400. A zero, negative, non-finite, or larger value is a usage error. In non-TTY output, the status line prints once per interval.
+
+## Session log
+
+Each run writes a session log under `~/Library/Logs/iairport/`. The file name is `iairport-YYYYMMDD-HHMMSS.log`, with the pid added when a file already has that name. It holds the plain-text transcript: every status line, event line, and summary. With `--json`, it holds the NDJSON output. Nothing is pruned, so delete old files yourself. Use `--no-session-log` to skip it. `--log-dir PATH` puts the file in another folder, for example a case folder; the folder is created if needed.
 
 ## sudo
 

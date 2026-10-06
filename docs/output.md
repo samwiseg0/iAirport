@@ -1,6 +1,6 @@
 # Output
 
-iairport writes human output by default. It writes JSON when `--json` is set. It writes CSV files when `-l` is set. Timestamps in JSON `ts` and CSV `ts_iso` are local ISO 8601 time with a UTC offset.
+iairport writes human output by default. It also writes a session log for each run. It writes JSON when `--json` is set. It writes CSV files when `-l` is set. Timestamps in JSON `ts` and CSV `ts_iso` are local ISO 8601 time with a UTC offset.
 
 ## The status line
 
@@ -53,6 +53,10 @@ That line uses JSON type `bssid_correction` with `cached_bssid`, `bssid`, and `a
 ## Summary
 
 Ctrl-C, SIGTERM, and SIGHUP stop the log stream and print a summary. The summary includes elapsed time, roams, reconnects, disconnects, distinct BSSIDs, and bytes. It also prints final IPv4 and IPv6 state. When roam history exists, it prints time, SSID, BSSID, AP name, vendor, channel, join RSSI, leave RSSI, and dwell.
+
+## Session log
+
+Each run writes `~/Library/Logs/iairport/iairport-YYYYMMDD-HHMMSS.log`. The file keeps the plain transcript with unclipped status lines, event lines, and the summary. With `--json`, it keeps the NDJSON output. iairport does not prune old session logs. Use `--log-dir PATH` to put the file in another folder. Use `--no-session-log` to skip it.
 
 ## CSV files
 

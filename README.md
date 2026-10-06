@@ -7,7 +7,7 @@ iairport watches a Mac Wi-Fi link while you roam, disconnect, and join again. It
 - **Disconnects and reconnects.** It shows link changes and reason text where the log gives one.
 - **Join timing.** It prints association, auth, link, IPv4, and IPv6 timing from airportd.
 - **IP state.** It tracks IPv4, IPv6, routers, and IPv6 address kinds.
-- **Logs.** It writes CSV files with headers or newline JSON for scripts.
+- **Logs.** It writes a session transcript, CSV files with headers, or newline JSON for scripts.
 - **Root extras.** Root access adds MCS, NSS, guard interval, and `-d` debug logging.
 
 [docs/features.md](docs/features.md) says what each line means. [docs/output.md](docs/output.md) lists the CSV and JSON fields. [docs/how-it-works.md](docs/how-it-works.md) explains the data sources.
@@ -64,6 +64,8 @@ Run the monitor:
 ```sh
 iairport
 ```
+
+Each run also writes a transcript to `~/Library/Logs/iairport/`. Use `--log-dir PATH` to put it elsewhere, or `--no-session-log` to skip it.
 
 Write CSV logs:
 

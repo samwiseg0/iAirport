@@ -76,10 +76,25 @@ case .success(let options):
     if options.debugToggle {
         exit(WdutilInfo.toggleDebug())
     }
+    let sessionLogResult: (log: SessionLog?, warning: String?)
+    if options.sessionLog {
+        let logDirectory = options.logDirectory ?? SessionLog.defaultDirectory()
+        switch SessionLog.open(directory: logDirectory, arguments: launchArguments) {
+        case .success(let log):
+            sessionLogResult = (log, nil)
+        case .failure(let error):
+            sessionLogResult = (nil, "\(logDirectory): \(error.reason)")
+        }
+    } else {
+        sessionLogResult = (nil, nil)
+    }
     // `iairport --sudo-log`: `log stream` needs root on accounts outside the
     // admin group, so ask sudo for exactly that command, up front, while the
     // terminal is still free for the prompt.
-    let note: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+    let note: (String) -> Void = {
+        sessionLogResult.log?.write($0)
+        FileHandle.standardError.write(Data(($0 + "\n").utf8))
+    }
     switch SudoLogStream.decide(sudoLog: options.sudoLog) {
     case .none:
         break
@@ -92,9 +107,9 @@ case .success(let options):
         }
     }
     var activeMonitor: IAirportMonitor?
-    let gate = LocationGateRuntime(interfaceName: options.interfaceName ?? LinkReader.defaultInterfaceName(), executablePath: executablePath, jsonMode: options.json)
+    let gate = LocationGateRuntime(interfaceName: options.interfaceName ?? LinkReader.defaultInterfaceName(), executablePath: executablePath, jsonMode: options.json, sessionLog: sessionLogResult.log)
     gate.start { result in
-        let monitor = IAirportMonitor(options: options, executablePath: executablePath, locationGate: result)
+        let monitor = IAirportMonitor(options: options, executablePath: executablePath, locationGate: result, sessionLog: sessionLogResult.log, sessionLogWarning: sessionLogResult.warning)
         monitor.onLiveSourceLost = { gate.liveSourceLost() }
         activeMonitor = monitor
         SignalInstaller.install {

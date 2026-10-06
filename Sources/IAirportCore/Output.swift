@@ -5,6 +5,7 @@ public final class Renderer {
     public let jsonMode: Bool
     public let colorEnabled: Bool
     public var onOutputClosed: (() -> Void)?
+    public var sessionLog: SessionLog?
     private let tty: Bool
     private var lastStatus: String = ""
     private var outputClosed = false
@@ -18,6 +19,7 @@ public final class Renderer {
 
     public func status(line: String, color: TextColor = .green) {
         guard !jsonMode else { return }
+        sessionLog?.write(line)
         // A wrapped status line cannot be redrawn with \r, so clip it to the window.
         let text = tty ? Renderer.clip(line, toColumns: Renderer.terminalColumns()) : line
         let rendered = TextStyle.apply(text, color: color, enabled: colorEnabled, bold: false)
@@ -42,6 +44,7 @@ public final class Renderer {
 
     public func event(line: String, color: TextColor = .none, bold: Bool = false, redrawStatus: Bool = true) {
         guard !jsonMode else { return }
+        sessionLog?.write(line)
         let rendered = TextStyle.apply(line, color: color, enabled: colorEnabled, bold: bold)
         if tty {
             writeRaw("\r\u{001B}[2K\(rendered)\n")
@@ -54,7 +57,9 @@ public final class Renderer {
     }
 
     public func json(_ object: [String: Any]) {
-        writeLine(JSONLine.encode(object))
+        let line = JSONLine.encode(object)
+        sessionLog?.write(line)
+        writeLine(line)
     }
 
     public func finishLine() {
