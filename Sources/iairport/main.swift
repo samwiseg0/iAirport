@@ -95,7 +95,7 @@ case .success(let options):
     let gate = LocationGateRuntime(interfaceName: options.interfaceName ?? LinkReader.defaultInterfaceName(), executablePath: executablePath, jsonMode: options.json)
     gate.start { result in
         let monitor = IAirportMonitor(options: options, executablePath: executablePath, locationGate: result)
-        monitor.onLiveSourceLost = { gate.requestPromptAgain() }
+        monitor.onLiveSourceLost = { gate.liveSourceLost() }
         activeMonitor = monitor
         SignalInstaller.install {
             // First signal: clean shutdown on the state queue. Second signal:

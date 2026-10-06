@@ -22,7 +22,7 @@ public final class IAirportMonitor {
     /// Set when the BSSID source just moved from cache to live. The next
     /// sample checks the cached BSSID against the live one before committing.
     private var liveSwitchPending = false
-    public var onLiveSourceLost: (() -> Bool)?
+    public var onLiveSourceLost: (() -> LiveSourceLossAction)?
     private var wdutilPrivilege: WdutilInfo.Privilege = .unavailable
     private var wdutilHintPrinted = false
     private var csv: CSVLogger?
@@ -111,7 +111,7 @@ public final class IAirportMonitor {
 
     private func printHeader() {
         guard !options.json else { return }
-        renderer.event(line: "iairport v2.1.1 (Swift rewrite of iAirport by Guillaume Germain)")
+        renderer.event(line: "iairport v2.1.2 (Swift rewrite of iAirport by Guillaume Germain)")
         renderer.event(line: macOSLine())
         renderer.event(line: "interface \(interfaceName)")
         if let ouiWarning { renderer.event(line: "warning: \(ouiWarning)", color: .yellow) }
@@ -341,17 +341,23 @@ public final class IAirportMonitor {
         writeEvent(message, color: .cyan, type: "bssid_correction", json: json)
     }
 
-    // airportd answers the first BSSID request from a stale grant when the binary
-    // changed, then withholds every later one. Fall back to the cache and ask again.
+    // airportd checks Location per request against the bundle this process was
+    // started from. When that bundle is removed or replaced mid-run (brew
+    // upgrade, make install, a rebuild), the check fails and every BSSID comes
+    // back nil while the grant itself stays in place. Verified on macOS 26.5.1
+    // by moving the bundle aside; live mode came back when it was restored.
     private func downgradeToCacheSource() {
         bssidSource = .cache
         liveSwitchPending = false
         cacheReason = .noGrant
         canRecheckLiveSource = true
         liveSourceLinePrinted = false
-        if onLiveSourceLost?() == true {
+        switch onLiveSourceLost?() ?? .reportNoGrant {
+        case .requestPrompt:
             writeEvent("Waiting for the Location prompt. Click Allow so iairport can read the SSID and BSSID.", color: .yellow, type: "log")
-        } else {
+        case .reportAuthorizedButWithheld:
+            writeEvent("Location is granted, but macOS can no longer verify this running copy. That usually means its app bundle was removed or replaced during an upgrade or install. BSSID comes from the scan cache. Live mode returns on its own if the bundle comes back; otherwise restart iairport.", color: .yellow, type: "log")
+        case .reportNoGrant:
             cacheWarningPrinted = false
             printCacheWarningIfNeeded()
         }

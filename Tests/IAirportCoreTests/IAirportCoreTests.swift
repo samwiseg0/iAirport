@@ -259,6 +259,14 @@ final class UtilityTests: XCTestCase {
         XCTAssertEqual(LocationGateDecision.decide(LocationGateDecisionInput(isBundled: true, hasBSSID: false, authorization: .unknown)), .cacheMode(reason: .noGrant))
     }
 
+    func testLiveSourceLossActions() {
+        XCTAssertEqual(LocationGateDecision.onLiveSourceLost(authorization: .notDetermined), .requestPrompt)
+        XCTAssertEqual(LocationGateDecision.onLiveSourceLost(authorization: .authorized), .reportAuthorizedButWithheld)
+        XCTAssertEqual(LocationGateDecision.onLiveSourceLost(authorization: .denied), .reportNoGrant)
+        XCTAssertEqual(LocationGateDecision.onLiveSourceLost(authorization: .restricted), .reportNoGrant)
+        XCTAssertEqual(LocationGateDecision.onLiveSourceLost(authorization: .unknown), .reportNoGrant)
+    }
+
     func testBundleLocatorFindsAppBundle() {
         let path = "/usr/local/libexec/iairport.app/Contents/MacOS/iairport"
         XCTAssertEqual(BundleLocator.bundleURL(forExecutablePath: path)?.path, "/usr/local/libexec/iairport.app")

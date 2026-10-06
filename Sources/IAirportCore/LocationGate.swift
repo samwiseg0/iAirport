@@ -83,6 +83,26 @@ public enum LocationGateDecision {
     }
 }
 
+/// What to do when live mode loses the BSSID mid-run.
+public enum LiveSourceLossAction: Equatable {
+    /// The grant is undecided. Ask again.
+    case requestPrompt
+    /// Location is granted, but airportd withholds the BSSID anyway. Seen when
+    /// the bundle this process started from was removed or replaced mid-run.
+    case reportAuthorizedButWithheld
+    case reportNoGrant
+}
+
+extension LocationGateDecision {
+    public static func onLiveSourceLost(authorization: LocationAuthorizationState) -> LiveSourceLossAction {
+        switch authorization {
+        case .notDetermined: return .requestPrompt
+        case .authorized: return .reportAuthorizedButWithheld
+        case .denied, .restricted, .unknown: return .reportNoGrant
+        }
+    }
+}
+
 public struct LocationGateResult: Equatable {
     public var source: BSSIDSource
     public var cacheReason: LocationCacheReason?
@@ -132,15 +152,16 @@ public final class LocationGateRuntime: NSObject, CLLocationManagerDelegate {
     }
 
     // Called by the monitor when live mode loses the BSSID mid-run.
-    // Returns true when a prompt was requested.
-    public func requestPromptAgain() -> Bool {
-        guard authState(manager.authorizationStatus) == .notDetermined else { return false }
-        DispatchQueue.main.async {
-            self.handshakeTried = false
-            self.manager.requestWhenInUseAuthorization()
-            self.schedulePromptPoll()
+    public func liveSourceLost() -> LiveSourceLossAction {
+        let action = LocationGateDecision.onLiveSourceLost(authorization: authState(manager.authorizationStatus))
+        if action == .requestPrompt {
+            DispatchQueue.main.async {
+                self.handshakeTried = false
+                self.manager.requestWhenInUseAuthorization()
+                self.schedulePromptPoll()
+            }
         }
-        return true
+        return action
     }
 
     private func evaluate() {
