@@ -97,7 +97,7 @@ See [docs/commands.md](docs/commands.md) for every flag and exit code.
 
 ## Windows
 
-A Rust port for Windows lives in [`windows/`](windows/README.md). It builds `iairport.exe` with `cargo build --release` on Windows, or with `make windows` from a Mac with mingw-w64. The status line, event lines, CSV columns and JSON keys match this tool. Windows has no noise, SNR, CCA, MCS or NSS, so those fields stay blank. [docs/windows.md](docs/windows.md) lists the data sources and what differs.
+A Rust port for Windows lives in [`windows/`](windows/README.md). Download `iairport-windows-x64.zip` from the [releases page](https://github.com/samwiseg0/iAirport/releases), or build `iairport.exe` with `cargo build --release` on Windows, or with `make windows` from a Mac with mingw-w64. The status line, event lines, CSV columns and JSON keys match this tool. Windows has no noise, SNR, CCA, MCS or NSS, so those fields stay blank. [docs/windows.md](docs/windows.md) lists the data sources and what differs.
 
 ## Credits and licence
 

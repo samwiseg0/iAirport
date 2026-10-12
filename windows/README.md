@@ -11,6 +11,12 @@ This is the Windows build of iairport, written in Rust. It watches one Wi-Fi ada
 - On Windows 11 24H2 and later, Location must be on for RSSI in dBm, channel, width, security detail and AP name. Turn on **Settings > Privacy & security > Location**, then **Location services** and **Let desktop apps access your location**. Without it iairport still runs and prints one hint. See "Reduced mode" below.
 - Event Log access to `Microsoft-Windows-WLAN-AutoConfig/Operational` for DEAUTH reasons and 802.1X detail. Standard users have it by default. If a policy blocks it, iairport prints one warning and keeps running without those lines.
 
+## Install
+
+Download `iairport-windows-x64.zip` from the latest [release](https://github.com/samwiseg0/iAirport/releases). It holds `iairport.exe`, `oui.txt` and the licence. Unzip it anywhere and run the exe from that folder. Nothing else is needed.
+
+Every push to master also builds the same zip as a CI artifact on the Actions tab. Artifacts need a GitHub login and expire after 90 days.
+
 ## Build
 
 On Windows with a Rust toolchain:
