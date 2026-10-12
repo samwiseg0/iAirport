@@ -234,7 +234,9 @@ pub fn status_line(sample: &Sample, verbose: bool) -> (String, TextColor) {
 }
 
 fn ap_display(info: Option<&Association>) -> String {
-    let bssid = info.and_then(|i| i.bssid.clone()).unwrap_or_default();
+    let Some(bssid) = info.and_then(|i| i.bssid.clone()) else {
+        return "(bssid withheld)".to_string();
+    };
     match info.and_then(|i| i.ap_name.as_ref()) {
         Some(name) => format!("{bssid} ({name})"),
         None => bssid,

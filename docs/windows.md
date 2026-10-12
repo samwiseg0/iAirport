@@ -11,9 +11,9 @@ Windows 11 24H2 and later return `ERROR_ACCESS_DENIED` from the Wi-Fi queries wh
 - When the connection query is refused too: the interface state still says connected, so the status line shows a connected link with no SSID, BSSID or AP name. RSSI and channel print when the driver answers those opcodes. JOIN and DISCONNECT still print from the interface state. If MSM notifications are refused, ACM notifications alone drive connect and disconnect, and JOIN TIMING has no `assoc` or `auth`.
 - One yellow hint line names the setting to turn on. The hint prints once per run.
 
-Turning Location on while iairport runs is enough. The next sample switches back to `bss`.
+Turning Location on while iairport runs is enough. The next sample switches back to `bss`. A withheld BSSID is treated as the same association, so the switch in either direction is not a `ROAM`, and the association keeps the last known SSID, BSSID and AP name while they are withheld. Transition lines print `(bssid withheld)` in place of the BSSID.
 
-This mode is written from the Microsoft documentation. It has not been run on a 24H2 machine yet.
+Seen on Windows 11 26H2 (build 26300): the connection query is refused along with the BSS list, so the status line reads `"" () Chan 116  RSSI -60`. RSSI and channel still come from the driver opcodes.
 
 ## Which notification drives which line
 
@@ -70,11 +70,15 @@ Verified on Windows 11 23H2 (build 22631), Intel Dual Band Wireless-AC 8260, Aru
 - Ctrl-C prints the summary and closes the session log.
 - Wi-Fi off and on: `Wi-Fi is off`, then `JOIN` with a full `JOIN TIMING`.
 
+Verified on Windows 11 26H2 (build 26300), same machine:
+
+- Location off: one hint line, `JOIN  (bssid withheld)`, status line with channel and RSSI but no SSID, BSSID or AP name.
+- Location toggled off and on nine times during a run: samples switch between reduced and full on the next poll, no `ROAM` lines.
+
 Still open:
 
-1. Windows 11 24H2 with Location off: the hint line, `bssid_source=connection`, blank or partial link fields. Turn Location on and watch the next sample switch to `bss`.
-2. Power off the current AP: `DISCONNECT`, `WLAN DISCONNECTED  reason N`, and a `DEAUTH` line from Event Log 8003 if the controller sent one.
-3. Forget and rejoin a WPA2-Enterprise network: 12011 and 12012 in `-v`, and `auth` in `JOIN TIMING`.
-4. Renew the lease (`ipconfig /renew`): `DHCP changed` and an `IP` line.
-5. Ctrl-Break and closing the window: the summary prints and the session log closes.
-6. Run as a standard user with the Event Log channel locked down by policy: one warning, the monitor keeps running.
+1. Power off the current AP: `DISCONNECT`, `WLAN DISCONNECTED  reason N`, and a `DEAUTH` line from Event Log 8003 if the controller sent one.
+2. Forget and rejoin a WPA2-Enterprise network: 12011 and 12012 in `-v`, and `auth` in `JOIN TIMING`.
+3. Renew the lease (`ipconfig /renew`): `DHCP changed` and an `IP` line.
+4. Ctrl-Break and closing the window: the summary prints and the session log closes.
+5. Run as a standard user with the Event Log channel locked down by policy: one warning, the monitor keeps running.

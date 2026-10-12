@@ -82,8 +82,20 @@ impl AssociationTracker {
                     since: now,
                 };
                 match self.current.take() {
-                    Some(cur) if cur.bssid == incoming.bssid => {
+                    // A missing BSSID on either side means Windows withheld
+                    // it (Location off), so it is the same association.
+                    Some(cur)
+                        if cur.bssid == incoming.bssid
+                            || cur.bssid.is_none()
+                            || incoming.bssid.is_none() =>
+                    {
                         incoming.since = cur.since;
+                        if incoming.bssid.is_none() {
+                            incoming.bssid = cur.bssid.clone();
+                        }
+                        if incoming.ssid.is_none() {
+                            incoming.ssid = cur.ssid.clone();
+                        }
                         if incoming.ap_name.is_none() {
                             incoming.ap_name = cur.ap_name.clone();
                         }
@@ -106,7 +118,9 @@ impl AssociationTracker {
                     }
                     None => {
                         let kind = match (&self.last_associated, previous_status) {
-                            (Some(last), Some(_)) if last.bssid == incoming.bssid => {
+                            (Some(last), Some(_))
+                                if last.bssid.is_some() && last.bssid == incoming.bssid =>
+                            {
                                 TransitionKind::Reconnect
                             }
                             _ => TransitionKind::Join,
@@ -213,5 +227,62 @@ mod tests {
         let cur = t.current().unwrap();
         assert_eq!(cur.since, t0);
         assert_eq!(cur.ap_name.as_deref(), Some("ap-1"));
+    }
+
+    /// Location toggled off and on while running: the BSSID disappears and
+    /// comes back. Neither change is a roam, and the association keeps the
+    /// last known identity while it is withheld.
+    #[test]
+    fn withheld_bssid_is_not_a_roam() {
+        let withheld = LinkState::associated(LinkSample {
+            channel: Some(36),
+            rssi_dbm: Some(-60),
+            ..Default::default()
+        });
+        let mut t = AssociationTracker::default();
+        let t0 = Local::now();
+        let mut named = assoc("00:0b:86:11:22:01");
+        named.link.ap_name = Some("ap-1".into());
+        t.commit(&named, t0);
+        assert!(t.commit(&withheld, t0 + Duration::seconds(5)).is_none());
+        let cur = t.current().unwrap();
+        assert_eq!(cur.bssid.as_deref(), Some("00:0b:86:11:22:01"));
+        assert_eq!(cur.ssid.as_deref(), Some("Corp"));
+        assert_eq!(cur.ap_name.as_deref(), Some("ap-1"));
+        assert_eq!(cur.since, t0);
+        assert!(t
+            .commit(&assoc("00:0b:86:11:22:01"), t0 + Duration::seconds(10))
+            .is_none());
+        // Location came back on a different AP: that is a real roam.
+        assert!(t.commit(&withheld, t0 + Duration::seconds(15)).is_none());
+        let roam = t
+            .commit(&assoc("00:0b:86:11:22:02"), t0 + Duration::seconds(20))
+            .unwrap();
+        assert_eq!(roam.kind, TransitionKind::Roam);
+        assert_eq!(
+            roam.from.as_ref().unwrap().bssid.as_deref(),
+            Some("00:0b:86:11:22:01")
+        );
+    }
+
+    /// Started with Location off: JOIN with no BSSID, and a later join with
+    /// no BSSID is still a JOIN rather than a RECONNECT.
+    #[test]
+    fn withheld_bssid_joins_are_not_reconnects() {
+        let withheld = LinkState::associated(LinkSample {
+            channel: Some(36),
+            rssi_dbm: Some(-60),
+            ..Default::default()
+        });
+        let mut t = AssociationTracker::default();
+        let t0 = Local::now();
+        assert_eq!(t.commit(&withheld, t0).unwrap().kind, TransitionKind::Join);
+        t.commit(&LinkState::disconnected(), t0 + Duration::seconds(5));
+        assert_eq!(
+            t.commit(&withheld, t0 + Duration::seconds(10))
+                .unwrap()
+                .kind,
+            TransitionKind::Join
+        );
     }
 }
