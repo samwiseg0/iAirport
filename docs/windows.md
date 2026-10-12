@@ -13,7 +13,21 @@ Windows 11 24H2 and later return `ERROR_ACCESS_DENIED` from the Wi-Fi queries wh
 
 Turning Location on while iairport runs is enough. The next sample switches back to `bss`. A withheld BSSID is treated as the same association, so the switch in either direction is not a `ROAM`, and the association keeps the last known SSID, BSSID and AP name while they are withheld. Transition lines print `(bssid withheld)` in place of the BSSID.
 
-Seen on Windows 11 26H2 (build 26300): the connection query is refused along with the BSS list, so the status line reads `"" () Chan 116  RSSI -60`. RSSI and channel still come from the driver opcodes.
+Seen on Windows 11 26H2 (build 26300): the connection query is refused along with the BSS list. The realtime connection quality query still answers, so the status line reads `"" () Chan 116 11ac (650 Mbps)  RSSI -61`.
+
+## Connection quality and MLO
+
+Windows 11 24H2 and later (SDK 10.0.26100) add the `wlan_intf_opcode_realtime_connection_quality` query. It returns the PHY type, link quality, rx and tx rate, and one entry per link with centre frequency, bandwidth and RSSI. On Wi-Fi 7 it flags a multi-link (MLO) connection and lists each link.
+
+iairport queries it on every sample. It is the only source of the receive rate. Older Windows returns an error and the rx fields stay blank.
+
+- The status line prints `(tx 1200 rx 1440 Mbps)` when the two rates differ, `(780 Mbps)` when they match.
+- The CSV gets `rx_rate_mbps` and `mlo_links`, both at the end of the row. `mlo_links` holds one entry per link as `id:centre_mhz/width/rssi`, joined with `;`. Blank when the connection is not MLO.
+- The JSON sample carries `rx_rate_mbps`. When the connection is MLO it also carries `mlo: true` and a `links` array with `link_id`, `center_mhz`, `channel`, `band`, `width_mhz` and `rssi_dbm`.
+- When the connection is MLO the status line appends `MLO 2 links: 5 GHz ch 36 -55 dBm, 6 GHz ch 37 -60 dBm`.
+- In reduced mode the query is not Location gated, so it fills in RSSI, channel, band, width and PHY when the connection attributes are withheld. It fills those only from a single-link answer.
+
+The query does not return a BSSID per link, so roam detection stays on the connection BSSID. On an MLO connection Windows reports one BSSID for the whole association. A link added or dropped is not a roam. Which link the driver lists first, and whether `bandwidth` is in MHz on every driver, is unverified. No MLO hardware was available when this was written. The parser was checked against a live single-link answer from an Intel 8260 on 26H2 (`bandwidth` 0 from that older driver, treated as unknown).
 
 ## Which notification drives which line
 
@@ -72,8 +86,9 @@ Verified on Windows 11 23H2 (build 22631), Intel Dual Band Wireless-AC 8260, Aru
 
 Verified on Windows 11 26H2 (build 26300), same machine:
 
-- Location off: one hint line, `JOIN  (bssid withheld)`, status line with channel and RSSI but no SSID, BSSID or AP name.
+- Location off: one hint line, `JOIN  (bssid withheld)`, status line with channel, PHY, rate and RSSI but no SSID, BSSID or AP name.
 - Location toggled off and on nine times during a run: samples switch between reduced and full on the next poll, no `ROAM` lines.
+- Realtime connection quality: `rx_rate_mbps` in the CSV and JSON, rate shown with Location on and off. Single link only; MLO output is untested on hardware.
 
 Still open:
 

@@ -13,6 +13,7 @@ pub mod link;
 pub mod monitor;
 pub mod oui;
 pub mod output;
+pub mod quality;
 pub mod reason_codes;
 pub mod session_log;
 pub mod throughput;

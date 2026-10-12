@@ -1,4 +1,5 @@
 use crate::ie::SecurityInfo;
+use crate::quality::QualityLink;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RadioStatus {
@@ -48,11 +49,15 @@ pub struct LinkSample {
     pub phy: Option<String>,
     pub security: Option<SecurityInfo>,
     pub tx_rate_mbps: Option<f64>,
+    pub rx_rate_mbps: Option<f64>,
     pub rssi_dbm: Option<i32>,
     pub signal_pct: Option<u32>,
     pub tx_retrans: Option<u64>,
     pub tx_fail: Option<u64>,
     pub rx_retry: Option<u64>,
+    /// Links of a Wi-Fi 7 MLO connection. Empty for a single-link
+    /// connection or when the driver does not answer opcode 19.
+    pub mlo_links: Vec<QualityLink>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

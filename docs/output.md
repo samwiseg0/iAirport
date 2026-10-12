@@ -66,6 +66,8 @@ Each run writes `~/Library/Logs/iairport/iairport-YYYYMMDD-HHMMSS.log`. The file
 ts_iso,epoch_ms,state,ssid,bssid,bssid_source,ap_name,vendor,channel,width_mhz,band,phy,security,ft,mcs,nss,gi_ns,tx_rate_mbps,rssi_dbm,noise_dbm,snr_db,cca_pct,tx_retrans,tx_fail,rx_retry,bytes_in,bytes_out,bps_in,bps_out,ipv4,ipv4_gw,ipv6,ipv6_kind,ipv6_gw,ipv6_count
 ```
 
+On Windows the samples file has two more columns at the end, `rx_rate_mbps` and `mlo_links`, so the shared columns line up with macOS. See [windows.md](windows.md#connection-quality-and-mlo).
+
 `iairport-roams.csv` columns:
 
 ```text

@@ -1,0 +1,29 @@
+2026-10-05T13:18:27.175Z interface=en0
+2026-10-05T13:18:27.177Z dynamicStore decoded CachedScanRecord(bssid=d0:4d:c6:b2:78:40, ssid=WatchTower-Secure, channel=44, rssi=-70, noise=-95)
+2026-10-05T13:18:27.177Z startMonitoringEvent ok event=ssidDidChange
+2026-10-05T13:18:27.178Z startMonitoringEvent ok event=bssidDidChange
+2026-10-05T13:18:27.178Z startMonitoringEvent ok event=linkDidChange
+2026-10-05T13:18:27.178Z startMonitoringEvent ok event=linkQualityDidChange
+2026-10-05T13:18:27.178Z startMonitoringEvent ok event=scanCacheUpdated
+2026-10-05T13:18:27.179Z startMonitoringEvent ok event=modeDidChange
+2026-10-05T13:18:27.179Z startMonitoringEvent ok event=powerDidChange
+2026-10-05T13:18:27.179Z startMonitoringEvent ok event=countryCodeDidChange
+2026-10-05T13:18:27.180Z dynamicStore notification keysOK=true queueOK=true key=State:/Network/Interface/en0/AirPort pattern=State:/Network/Interface/en0/AirPort.*
+2026-10-05T13:19:07.235Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort", "State:/Network/Interface/en0/AirPort/ProfileID"]
+2026-10-05T13:19:07.236Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SmartCCADesenseSupported", "State:/Network/Interface/en0/AirPort/BluetoothPagingInProgress "]
+2026-10-05T13:19:07.236Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/WEP40", "State:/Network/Interface/en0/AirPort/AirPlay", "State:/Network/Interface/en0/AirPort/AWDLRealTimeMode"]
+2026-10-05T13:19:07.237Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SmartCCADesenseUSBPresence", "State:/Network/Interface/en0/AirPort/AutoJoinTimestamp", "State:/Network/Interface/en0/AirPort/BSSID"]
+2026-10-05T13:19:07.237Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SSID", "State:/Network/Interface/en0/AirPort/CHANNEL", "State:/Network/Interface/en0/AirPort/BusyUI"]
+2026-10-05T13:19:07.238Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/Busy", "State:/Network/Interface/en0/AirPort/Power Status"]
+2026-10-05T13:19:07.238Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/WEPOPENSYSTEM", "State:/Network/Interface/en0/AirPort/UserMode8021X"]
+2026-10-05T13:19:07.239Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/CachedScanRecord", "State:/Network/Interface/en0/AirPort/BluetoothAudioInUse", "State:/Network/Interface/en0/AirPort/SSID_STR"]
+2026-10-05T13:19:07.366Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort", "State:/Network/Interface/en0/AirPort/SSID_STR"]
+2026-10-05T13:19:07.367Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SmartCCADesenseSupported", "State:/Network/Interface/en0/AirPort/BluetoothPagingInProgress "]
+2026-10-05T13:19:07.368Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/WEP40", "State:/Network/Interface/en0/AirPort/AirPlay", "State:/Network/Interface/en0/AirPort/AWDLRealTimeMode"]
+2026-10-05T13:19:07.368Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SmartCCADesenseUSBPresence", "State:/Network/Interface/en0/AirPort/AutoJoinTimestamp", "State:/Network/Interface/en0/AirPort/BSSID"]
+2026-10-05T13:19:07.369Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/SSID", "State:/Network/Interface/en0/AirPort/CHANNEL"]
+2026-10-05T13:19:07.369Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/ProfileID", "State:/Network/Interface/en0/AirPort/Busy"]
+2026-10-05T13:19:07.370Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/Power Status", "State:/Network/Interface/en0/AirPort/WEPOPENSYSTEM"]
+2026-10-05T13:19:07.370Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/UserMode8021X", "State:/Network/Interface/en0/AirPort/CachedScanRecord", "State:/Network/Interface/en0/AirPort/BluetoothAudioInUse"]
+2026-10-05T13:19:07.371Z dynamicStore callback keys=["State:/Network/Interface/en0/AirPort/BusyUI"]
+2026-10-05T13:19:14.453Z summary linkQualityCount=0

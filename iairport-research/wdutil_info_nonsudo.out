@@ -1,0 +1,7 @@
+usage: sudo wdutil diagnose [-q] [-f outputDirectoryPath]
+            -q may be specified to suppress legal prompt and Finder window
+       sudo wdutil info
+       sudo wdutil log [{+|-} {system|wifi}]+
+       sudo wdutil dump
+       sudo wdutil clean
+       sudo wdutil privateMAC={0/1}

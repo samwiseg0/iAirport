@@ -92,6 +92,7 @@ Flags: `-v`, `-l`, `-i X`, `--oui PATH`, `--no-color`, `--no-session-log`, `--lo
 | Primary interface | `GetBestInterfaceEx` | No |
 | Bytes in and out | `GetIfEntry2` InOctets and OutOctets | No |
 | Retry and fail counters | `WlanQueryInterface` statistics, when the driver answers | No |
+| Rx rate, MLO links | `WlanQueryInterface` realtime connection quality, Windows 11 24H2 and later | No |
 | MCS, NSS, guard interval, noise, SNR, CCA | Not available on Windows | |
 
 ## Differences from macOS
@@ -103,3 +104,4 @@ Flags: `-v`, `-l`, `-i X`, `--oui PATH`, `--no-color`, `--no-session-log`, `--lo
 - IPv6 kinds come from the address origin fields, so the JSON `ip` object carries `prefix_origin` and `suffix_origin` instead of macOS `flags`.
 - The retry columns (`tx_retrans`, `tx_fail`, `rx_retry`) are per-interval deltas of the driver's MAC counters, and `rx_retry` is the duplicate-frame count. Many drivers refuse the statistics opcode; then the columns stay blank.
 - The session log and OUI file live under `%LOCALAPPDATA%\iairport\`.
+- The samples CSV has two extra columns at the end, `rx_rate_mbps` and `mlo_links`, from the Windows 11 24H2 connection quality query. The JSON sample carries `rx_rate_mbps`, and `mlo` plus `links` on a Wi-Fi 7 multi-link connection. The status line shows `(tx N rx N Mbps)` when the rates differ. Details in [docs/windows.md](../docs/windows.md#connection-quality-and-mlo).

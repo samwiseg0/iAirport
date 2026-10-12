@@ -196,8 +196,23 @@ pub fn status_line(sample: &Sample, verbose: bool) -> (String, TextColor) {
                 }
                 parts.push(text);
             }
-            if let Some(rate) = link.tx_rate_mbps.filter(|r| *r > 0.0) {
-                parts.push(format!("({rate:.0} Mbps)"));
+            match (
+                link.tx_rate_mbps.filter(|r| *r > 0.0),
+                link.rx_rate_mbps.filter(|r| *r > 0.0),
+            ) {
+                (Some(tx), Some(rx)) if tx.round() != rx.round() => {
+                    parts.push(format!("(tx {tx:.0} rx {rx:.0} Mbps)"));
+                }
+                (Some(rate), _) | (None, Some(rate)) => parts.push(format!("({rate:.0} Mbps)")),
+                (None, None) => {}
+            }
+            if !link.mlo_links.is_empty() {
+                let links: Vec<String> = link.mlo_links.iter().map(|l| l.display()).collect();
+                parts.push(format!(
+                    "MLO {} links: {}",
+                    link.mlo_links.len(),
+                    links.join(", ")
+                ));
             }
             let mut quality: Vec<String> = Vec::new();
             // Windows gives no noise floor, SNR or CCA. When the BSS list is
@@ -333,6 +348,25 @@ pub fn sample_json(sample: &Sample) -> Value {
         json!(link.security.as_ref().is_some_and(|s| s.mfp())),
     );
     set(&mut object, "tx_rate_mbps", link.tx_rate_mbps);
+    set(&mut object, "rx_rate_mbps", link.rx_rate_mbps);
+    if !link.mlo_links.is_empty() {
+        object.insert("mlo".into(), json!(true));
+        let links: Vec<Value> = link
+            .mlo_links
+            .iter()
+            .map(|l| {
+                let mut o = Map::new();
+                o.insert("link_id".into(), json!(l.link_id));
+                o.insert("center_mhz".into(), json!(l.center_mhz));
+                set(&mut o, "channel", l.channel());
+                set(&mut o, "band", l.band());
+                set(&mut o, "width_mhz", l.bandwidth_mhz);
+                set(&mut o, "rssi_dbm", l.rssi_dbm);
+                Value::Object(o)
+            })
+            .collect();
+        object.insert("links".into(), Value::Array(links));
+    }
     set(&mut object, "rssi_dbm", link.rssi_dbm);
     set(&mut object, "signal_pct", link.signal_pct);
     set(&mut object, "bytes_in", sample.bytes_in);
@@ -456,7 +490,7 @@ impl PendingRoamCsvBuffer {
     }
 }
 
-pub const SAMPLE_HEADER: &str = "ts_iso,epoch_ms,state,ssid,bssid,bssid_source,ap_name,vendor,channel,width_mhz,band,phy,security,ft,mcs,nss,gi_ns,tx_rate_mbps,rssi_dbm,noise_dbm,snr_db,cca_pct,tx_retrans,tx_fail,rx_retry,bytes_in,bytes_out,bps_in,bps_out,ipv4,ipv4_gw,ipv6,ipv6_kind,ipv6_gw,ipv6_count";
+pub const SAMPLE_HEADER: &str = "ts_iso,epoch_ms,state,ssid,bssid,bssid_source,ap_name,vendor,channel,width_mhz,band,phy,security,ft,mcs,nss,gi_ns,tx_rate_mbps,rssi_dbm,noise_dbm,snr_db,cca_pct,tx_retrans,tx_fail,rx_retry,bytes_in,bytes_out,bps_in,bps_out,ipv4,ipv4_gw,ipv6,ipv6_kind,ipv6_gw,ipv6_count,rx_rate_mbps,mlo_links";
 pub const ROAM_HEADER: &str = "ts_iso,epoch_ms,kind,ssid,old_bssid,new_bssid,old_ap_name,new_ap_name,bssid_source,old_channel,new_channel,old_rssi_dbm,new_rssi_dbm,dwell_s,v4_after_roam,v6_after_roam,v4_ready_ms,v6_ready_ms,assoc_ms,auth_ms,linkup_ms,ipv4_ms,ipv6_ms,ipv4_primary_ms,ipv6_primary_ms";
 
 fn s<T: ToString>(value: Option<T>) -> Option<String> {
@@ -464,7 +498,8 @@ fn s<T: ToString>(value: Option<T>) -> Option<String> {
 }
 
 /// The columns mcs, nss, gi_ns, noise_dbm, snr_db and cca_pct stay empty.
-/// wlanapi exposes none of them.
+/// wlanapi exposes none of them. `rx_rate_mbps` and `mlo_links` are the
+/// Windows-only columns, kept at the end so the macOS columns line up.
 pub fn sample_row(sample: &Sample) -> String {
     let link = &sample.link;
     let v6 = sample.ip_state.display_ipv6();
@@ -512,6 +547,15 @@ pub fn sample_row(sample: &Sample) -> String {
         v6.map(|a| a.kind().as_str().to_string()),
         ip.ipv6_router.clone(),
         Some(ip.ipv6.len().to_string()),
+        link.rx_rate_mbps.map(|r| format!("{r:.1}")),
+        Some(
+            link.mlo_links
+                .iter()
+                .map(|l| l.csv())
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+        .filter(|s| !s.is_empty()),
     ])
 }
 
@@ -697,6 +741,7 @@ mod tests {
             tx_retrans: Some(3),
             tx_fail: Some(0),
             rx_retry: None,
+            ..Default::default()
         };
         sample.vendor = Some("Aruba".into());
         sample.bytes_in = Some(1_200_000);
@@ -859,6 +904,52 @@ mod tests {
         assert_eq!(row.split(',').count(), ROAM_HEADER.split(',').count());
     }
 
+    /// Opcode 19 data: rx rate on every connection, links only under MLO.
+    #[test]
+    fn rx_rate_and_mlo_links_in_status_json_and_csv() {
+        use crate::quality::QualityLink;
+        let mut sample = sample();
+        sample.link.rx_rate_mbps = Some(1440.0);
+        let (line, _) = status_line(&sample, false);
+        assert!(line.contains("(tx 1200 rx 1440 Mbps)"), "{line}");
+        assert!(!line.contains("MLO"), "{line}");
+        let json = sample_json(&sample);
+        assert_eq!(json["rx_rate_mbps"], 1440.0);
+        assert!(json.get("mlo").is_none());
+        let row = sample_row(&sample);
+        assert!(row.ends_with(",1,1440.0,\n"), "{row}");
+
+        sample.link.rx_rate_mbps = Some(1200.0);
+        sample.link.mlo_links = vec![
+            QualityLink {
+                link_id: 0,
+                center_mhz: 5210,
+                bandwidth_mhz: Some(80),
+                rssi_dbm: Some(-58),
+            },
+            QualityLink {
+                link_id: 1,
+                center_mhz: 6115,
+                bandwidth_mhz: Some(160),
+                rssi_dbm: Some(-61),
+            },
+        ];
+        let (line, _) = status_line(&sample, false);
+        assert!(line.contains("(1200 Mbps) MLO 2 links: 5 GHz ch 42/80 -58 dBm, 6 GHz ch 33/160 -61 dBm  RSSI -55"), "{line}");
+        let json = sample_json(&sample);
+        assert_eq!(json["mlo"], true);
+        assert_eq!(json["links"][1]["channel"], 33);
+        assert_eq!(json["links"][1]["band"], "6");
+        assert_eq!(json["links"][1]["width_mhz"], 160);
+        assert_eq!(json["links"][1]["rssi_dbm"], -61);
+        let row = sample_row(&sample);
+        assert!(
+            row.ends_with(",1,1200.0,0:5210/80/-58;1:6115/160/-61\n"),
+            "{row}"
+        );
+        assert_eq!(row.split(',').count(), SAMPLE_HEADER.split(',').count());
+    }
+
     #[test]
     fn sample_json_keys_and_csv_columns() {
         let json = sample_json(&sample());
@@ -903,7 +994,7 @@ mod tests {
         assert_eq!(json["ip"]["v4"][0], "192.0.2.143");
         let row = sample_row(&sample());
         assert_eq!(row.split(',').count(), SAMPLE_HEADER.split(',').count());
-        assert!(row.contains(",associated,Corp,00:0b:86:11:22:01,bss,ap-3-2,Aruba,36,80,5,802.11ax,wpa2-enterprise,1,,,,1200.0,-55,,,,3,0,,1200000,300000,10000000,2000000,192.0.2.143,192.0.2.1,2001:db8:1::1234,slaac,fe80::1,1\n"), "{row}");
+        assert!(row.contains(",associated,Corp,00:0b:86:11:22:01,bss,ap-3-2,Aruba,36,80,5,802.11ax,wpa2-enterprise,1,,,,1200.0,-55,,,,3,0,,1200000,300000,10000000,2000000,192.0.2.143,192.0.2.1,2001:db8:1::1234,slaac,fe80::1,1,,\n"), "{row}");
         let event = event_json(
             "deauth",
             "DEAUTH  reason 3",
@@ -921,7 +1012,7 @@ mod tests {
 
     #[test]
     fn headers_are_documented_strings() {
-        assert_eq!(SAMPLE_HEADER.split(',').count(), 35);
+        assert_eq!(SAMPLE_HEADER.split(',').count(), 37);
         assert_eq!(ROAM_HEADER.split(',').count(), 25);
         assert!(SAMPLE_HEADER.starts_with("ts_iso,epoch_ms,state,ssid,bssid,bssid_source,"));
         assert!(ROAM_HEADER.ends_with(",ipv4_primary_ms,ipv6_primary_ms"));

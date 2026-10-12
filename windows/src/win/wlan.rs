@@ -16,6 +16,7 @@ use crate::events::{MonitorInput, WlanEvent};
 use crate::format::mac;
 use crate::ie;
 use crate::link::{BssidSource, LinkSample, LinkState};
+use crate::quality::{self, ConnectionQuality};
 use crate::Date;
 
 pub struct WlanClient {
@@ -200,6 +201,18 @@ impl WlanClient {
         buffer.read::<i32>().filter(|r| *r < 0)
     }
 
+    /// Opcode 19, Windows 11 24H2 and later. Older builds and drivers
+    /// refuse it, which reads as None.
+    pub fn connection_quality(&self, guid: &GUID) -> Option<ConnectionQuality> {
+        let buffer = self
+            .query(guid, quality::OPCODE_REALTIME_CONNECTION_QUALITY)
+            .ok()?;
+        // SAFETY: wlanapi returned size bytes at data.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(buffer.data as *const u8, buffer.size as usize) };
+        quality::parse(bytes)
+    }
+
     pub fn statistics(&self, guid: &GUID) -> Option<FrameStats> {
         let buffer = self.query(guid, wlan_intf_opcode_statistics).ok()?;
         let entry = std::mem::size_of::<WLAN_PHY_FRAME_STATISTICS>();
@@ -348,6 +361,33 @@ impl Drop for WlanClient {
             WlanCloseHandle(self.handle, ptr::null());
         }
     }
+}
+
+/// Folds opcode 19 into the sample. Blank beats a wrong value, so only the
+/// fields still unknown are filled from the single link.
+fn apply_quality(link: &mut LinkSample, q: &ConnectionQuality) {
+    link.rx_rate_mbps = q.rx_rate_mbps();
+    if link.tx_rate_mbps.is_none() {
+        link.tx_rate_mbps = q.tx_rate_mbps();
+    }
+    if link.phy.is_none() {
+        link.phy = ie::phy_name(q.phy_type).map(str::to_string);
+    }
+    if let [only] = q.links.as_slice() {
+        if link.rssi_dbm.is_none() {
+            link.rssi_dbm = only.rssi_dbm;
+        }
+        if link.channel.is_none() {
+            link.channel = only.channel();
+        }
+        if link.band.is_none() {
+            link.band = only.band().map(str::to_string);
+        }
+        if link.width_mhz.is_none() {
+            link.width_mhz = only.bandwidth_mhz;
+        }
+    }
+    link.mlo_links = q.mlo_links().to_vec();
 }
 
 struct QueryBuffer {
@@ -549,12 +589,16 @@ impl LinkReader {
                 self.last_stats = None;
                 self.bss_denied = true;
                 let state = if client.interface_connected(&self.guid) == Some(true) {
-                    LinkState::associated(LinkSample {
+                    let mut link = LinkSample {
                         bssid_source: Some(BssidSource::Connection),
                         rssi_dbm: client.rssi(&self.guid),
                         channel: client.channel_number(&self.guid),
                         ..Default::default()
-                    })
+                    };
+                    if let Some(q) = client.connection_quality(&self.guid) {
+                        apply_quality(&mut link, &q);
+                    }
+                    LinkState::associated(link)
                 } else {
                     LinkState::disconnected()
                 };
@@ -613,6 +657,9 @@ impl LinkReader {
                 .channel
                 .and_then(ie::band_from_channel)
                 .map(str::to_string);
+        }
+        if let Some(q) = client.connection_quality(&self.guid) {
+            apply_quality(&mut link, &q);
         }
         if let Some(stats) = client.statistics(&self.guid) {
             // Drivers reset these counters on reconnect, so a drop reads as 0.
