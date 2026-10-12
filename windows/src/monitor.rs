@@ -1041,7 +1041,7 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines[0],
-            "iairport v2.2.0 (Windows port of iAirport by Guillaume Germain)"
+            format!("iairport v{VERSION} (Windows port of iAirport by Guillaume Germain)")
         );
         assert_eq!(lines[1], "Windows 11 build 26100");
         assert_eq!(lines[2], "interface Wi-Fi");
