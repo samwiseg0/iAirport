@@ -69,6 +69,9 @@ pub struct JoinTimingTracker {
     connected: Option<Date>,
     timing: JoinTiming,
     reported: bool,
+    /// Set when ACM connection complete anchored the clock with no MSM
+    /// notification before it. `assoc` and `auth` cannot arrive then.
+    without_msm: bool,
 }
 
 /// Time after the start of a join when a partial timing line is printed.
@@ -99,7 +102,13 @@ impl JoinTimingTracker {
         }
     }
 
+    /// MSM connected. Ignored when no join is open: the Intel driver
+    /// re-emits connected for the current BSSID at the moment of a
+    /// user-requested disconnect, and that must not start a clock.
     pub fn connected(&mut self, now: Date) {
+        if self.timing.start.is_none() || self.reported {
+            return;
+        }
         if self.associated.is_none() {
             self.associated(now);
         }
@@ -107,6 +116,29 @@ impl JoinTimingTracker {
             self.connected = Some(now);
             self.timing.auth = self.associated.map(|t| ms(t, now));
         }
+    }
+
+    /// ACM connection complete. Anchors the clock when MSM notifications are
+    /// refused, so linkup and the IP phases can still be measured. `assoc`
+    /// and `auth` stay blank unless MSM reported them.
+    pub fn connection_complete(&mut self, now: Date) {
+        if self.timing.start.is_none() || self.connected.is_some() {
+            return;
+        }
+        self.connected = Some(now);
+        match self.associated {
+            Some(associated) => self.timing.auth = Some(ms(associated, now)),
+            None => self.without_msm = true,
+        }
+    }
+
+    fn complete(&self) -> bool {
+        if self.without_msm {
+            return ["linkup", "ipv4", "ipv6"]
+                .iter()
+                .all(|k| self.timing.value(k).is_some());
+        }
+        self.timing.is_complete()
     }
 
     pub fn link_up(&mut self, now: Date) {
@@ -142,18 +174,36 @@ impl JoinTimingTracker {
     }
 
     /// Returns the timing once: when complete, or when the join is older
-    /// than `REPORT_AFTER_MS` and at least one phase is known.
+    /// than `REPORT_AFTER_MS` and at least one phase is known. A join that
+    /// old with nothing known is closed silently, so the tracker cannot
+    /// hold the monitor at the 1 s settle rate for the whole connection.
     pub fn take_ready(&mut self, now: Date) -> Option<JoinTiming> {
         if self.reported {
             return None;
         }
         let start = self.timing.start?;
         let age = ms(start, now);
-        if self.timing.is_complete() || (age >= REPORT_AFTER_MS && self.timing.has_any()) {
+        if self.complete() || (age >= REPORT_AFTER_MS && self.timing.has_any()) {
             self.reported = true;
             return Some(self.timing.clone());
         }
+        if age >= REPORT_AFTER_MS {
+            self.reported = true;
+        }
         None
+    }
+
+    /// The phases known so far for a join still in progress.
+    pub fn snapshot(&self) -> Option<JoinTiming> {
+        (self.in_progress() && self.timing.has_any()).then(|| self.timing.clone())
+    }
+
+    /// Closes a join in progress and returns what was known, so a new join
+    /// can start without losing the previous one.
+    pub fn take_partial(&mut self) -> Option<JoinTiming> {
+        let timing = self.snapshot()?;
+        self.reported = true;
+        Some(timing)
     }
 
     pub fn reset(&mut self) {
@@ -229,11 +279,17 @@ mod tests {
     }
 
     #[test]
-    fn connected_without_associating_backfills() {
+    fn connected_without_an_open_join_is_ignored() {
         let t0 = Local::now();
         let mut tr = JoinTimingTracker::default();
         tr.connected(t0);
-        assert_eq!(tr.timing.assoc, Some(0));
+        assert!(!tr.in_progress());
+        assert!(tr.snapshot().is_none());
+
+        // Once a join is open, connected backfills the missing phases.
+        tr.begin(t0);
+        tr.connected(t0 + Duration::milliseconds(400));
+        assert_eq!(tr.timing.assoc, Some(400));
         assert_eq!(tr.timing.auth, Some(0));
     }
 }

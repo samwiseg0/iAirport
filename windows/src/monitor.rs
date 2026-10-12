@@ -11,7 +11,7 @@ use crate::cli::RunOptions;
 use crate::events::{LogEvent, Severity, WlanEvent};
 use crate::format::{self, time, units, TextColor};
 use crate::ip_state::{self, IpState};
-use crate::join_timing::JoinTimingTracker;
+use crate::join_timing::{JoinTiming, JoinTimingTracker};
 use crate::link::{BssidSource, LinkState, RadioStatus};
 use crate::oui::Oui;
 use crate::output::{
@@ -272,14 +272,32 @@ impl<S: Sink> Monitor<S> {
             return;
         }
         match &event {
-            WlanEvent::Associating => self.join_timing.associating(now),
-            WlanEvent::Associated { .. } => self.join_timing.associated(now),
-            WlanEvent::Connected { .. } => self.join_timing.connected(now),
+            WlanEvent::Associating => {
+                self.join_timing.associating(now);
+                self.verbose("wlan msm associating", now);
+            }
+            WlanEvent::Associated { bssid } => {
+                self.join_timing.associated(now);
+                let line = format!("wlan msm associated  {}", bssid.clone().unwrap_or_default());
+                self.verbose(&line, now);
+            }
+            WlanEvent::Authenticating => self.verbose("wlan msm authenticating", now),
+            WlanEvent::Connected { bssid } => {
+                self.join_timing.connected(now);
+                let line = format!("wlan msm connected  {}", bssid.clone().unwrap_or_default());
+                self.verbose(&line, now);
+            }
+            WlanEvent::Disassociating => self.verbose("wlan msm disassociating", now),
+            WlanEvent::ConnectionComplete => {
+                self.join_timing.connection_complete(now);
+                self.verbose("wlan connection complete", now);
+            }
+            WlanEvent::Disconnecting => self.verbose("wlan disconnecting", now),
             WlanEvent::Disconnected {
                 reason,
                 reason_text,
             } => {
-                self.join_timing.reset();
+                self.close_join_timing(now);
                 // WLAN_REASON_CODE namespace. Printed under its own label so
                 // nobody reads it as an 802.11 deauth reason.
                 let line = format!("WLAN DISCONNECTED  reason {reason} {reason_text}");
@@ -330,12 +348,12 @@ impl<S: Sink> Monitor<S> {
                 self.verbose(&line, now);
             }
             WlanEvent::RoamingStart => {
-                self.join_timing.begin(now);
+                self.begin_join_timing(now);
                 self.verbose("wlan roaming start", now)
             }
             WlanEvent::RoamingEnd => self.verbose("wlan roaming end", now),
             WlanEvent::ConnectionStart => {
-                self.join_timing.begin(now);
+                self.begin_join_timing(now);
                 self.verbose("wlan connection start", now)
             }
             WlanEvent::Other(text) => {
@@ -453,6 +471,25 @@ impl<S: Sink> Monitor<S> {
         self.flush_pending_join_csv_if_due(now);
     }
 
+    /// A roam within 15 s of a join would otherwise discard the join's
+    /// partial timing. Report it first, then start the new clock.
+    fn begin_join_timing(&mut self, now: Date) {
+        if let Some(timing) = self.join_timing.take_partial() {
+            self.emit_join_timing(timing, now);
+        }
+        self.join_timing.begin(now);
+    }
+
+    /// A disconnect inside the 15 s window would otherwise discard a
+    /// partial timing. On a network without IPv6 that is every join
+    /// shorter than 15 s.
+    fn close_join_timing(&mut self, now: Date) {
+        if let Some(timing) = self.join_timing.take_partial() {
+            self.emit_join_timing(timing, now);
+        }
+        self.join_timing.reset();
+    }
+
     fn advance_join_timing(&mut self, sample: &Sample, now: Date) {
         if !self.join_timing.in_progress() {
             return;
@@ -467,29 +504,33 @@ impl<S: Sink> Monitor<S> {
             }
         }
         if let Some(timing) = self.join_timing.take_ready(now) {
-            let line = timing.line();
-            let extra: Vec<(&str, serde_json::Value)> = crate::join_timing::KEYS
-                .iter()
-                .filter_map(|k| timing.value(k).map(|v| (*k, json!(v))))
-                .collect();
-            let json = output::event_json("join_timing", &line, &now, &extra);
-            self.write_event(
-                &line,
-                TextColor::Cyan,
-                "join_timing",
-                Some(json),
-                false,
-                now,
-            );
-            // The roam row waits for `IP after roam`, so the timing can still
-            // ride along with it.
-            if let Some(row) = self.pending_roam_csv.take() {
-                self.pending_roam_csv
-                    .replace(row.transition, Some(timing.clone()));
-            } else if let Some(row) = self.pending_join_csv.take() {
-                if let Some(csv) = self.csv.as_mut() {
-                    csv.write_transition(&row.transition, row.source, Some(&timing), None, None);
-                }
+            self.emit_join_timing(timing, now);
+        }
+    }
+
+    fn emit_join_timing(&mut self, timing: JoinTiming, now: Date) {
+        let line = timing.line();
+        let extra: Vec<(&str, serde_json::Value)> = crate::join_timing::KEYS
+            .iter()
+            .filter_map(|k| timing.value(k).map(|v| (*k, json!(v))))
+            .collect();
+        let json = output::event_json("join_timing", &line, &now, &extra);
+        self.write_event(
+            &line,
+            TextColor::Cyan,
+            "join_timing",
+            Some(json),
+            false,
+            now,
+        );
+        // The roam row waits for `IP after roam`, so the timing can still
+        // ride along with it.
+        if let Some(row) = self.pending_roam_csv.take() {
+            self.pending_roam_csv
+                .replace(row.transition, Some(timing.clone()));
+        } else if let Some(row) = self.pending_join_csv.take() {
+            if let Some(csv) = self.csv.as_mut() {
+                csv.write_transition(&row.transition, row.source, Some(&timing), None, None);
             }
         }
     }
@@ -517,7 +558,7 @@ impl<S: Sink> Monitor<S> {
             TransitionKind::Reconnect => self.reconnects += 1,
             TransitionKind::Disconnect => {
                 self.disconnects += 1;
-                self.join_timing.reset();
+                self.close_join_timing(transition.at);
             }
             TransitionKind::Join => {}
         }
@@ -695,14 +736,11 @@ impl<S: Sink> Monitor<S> {
         self.write_event(&line, TextColor::Cyan, "ip", Some(json), false, now);
         if let Some(row) = self.pending_roam_csv.take() {
             let source = self.bssid_source;
+            // On an IPv4-only network the timing only completes at the 15 s
+            // report, long after this row is written. Take what is known now.
+            let timing = row.timing.or_else(|| self.join_timing.snapshot());
             if let Some(csv) = self.csv.as_mut() {
-                csv.write_transition(
-                    &row.transition,
-                    source,
-                    row.timing.as_ref(),
-                    Some(v4),
-                    Some(v6),
-                );
+                csv.write_transition(&row.transition, source, timing.as_ref(), Some(v4), Some(v6));
             }
         }
     }
@@ -1262,6 +1300,146 @@ mod tests {
         let row = text.lines().nth(3).unwrap();
         assert!(row.contains(",join,Corp,,00:0b:86:11:22:02,"), "{row}");
         assert!(row.ends_with(",,,,,,,,"), "{row}");
+        m.shutdown(at(30_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ACM-only mode: no MSM notifications. The clock anchors on connection
+    /// complete, so linkup and the IP phases still print, without assoc or
+    /// auth.
+    #[test]
+    fn join_timing_without_msm_uses_connection_complete() {
+        let (mut m, out) = monitor(false, false);
+        m.on_wlan_event(WlanEvent::ConnectionStart, at(0));
+        m.on_wlan_event(WlanEvent::ConnectionComplete, at(900));
+        m.sample(
+            reading(
+                link("00:0b:86:11:22:01", 36, -55),
+                ip("192.0.2.143", "2001:db8:1::1234"),
+                0,
+            ),
+            SampleReason::Settle,
+            at(1000),
+        );
+        let text = out.0.borrow().clone();
+        assert!(
+            text.contains("JOIN TIMING  linkup 100 ms  ipv4 100 ms  ipv6 100 ms"),
+            "{text}"
+        );
+        assert!(!text.contains("assoc"), "{text}");
+    }
+
+    /// A join that never gets past connection start closes at the report
+    /// deadline, so the monitor returns to the normal poll interval.
+    #[test]
+    fn join_timing_with_nothing_known_closes_at_deadline() {
+        let (mut m, out) = monitor(false, false);
+        m.on_wlan_event(WlanEvent::RoamingStart, at(0));
+        m.on_wlan_event(WlanEvent::RoamingEnd, at(50));
+        let link_state = link("00:0b:86:11:22:01", 36, -55);
+        let ip_state = ip("192.0.2.143", "2001:db8:1::1234");
+        m.sample(
+            reading(link_state.clone(), ip_state.clone(), 0),
+            SampleReason::Settle,
+            at(1000),
+        );
+        assert!(m.join_timing.in_progress());
+        m.sample(
+            reading(link_state, ip_state, 0),
+            SampleReason::Poll,
+            at(1000 + crate::join_timing::REPORT_AFTER_MS),
+        );
+        assert!(!m.join_timing.in_progress());
+        assert!(!out.0.borrow().contains("JOIN TIMING"));
+    }
+
+    /// A short-lived join on a network without IPv6 reports its partial
+    /// timing at the disconnect instead of losing it.
+    #[test]
+    fn disconnect_reports_partial_join_timing() {
+        let (mut m, out) = monitor(false, false);
+        let mut v4_only = ip("192.0.2.143", "2001:db8:1::1234");
+        v4_only.ipv6.clear();
+        v4_only.ipv6_router = None;
+        m.on_wlan_event(WlanEvent::ConnectionStart, at(0));
+        m.on_wlan_event(WlanEvent::Associated { bssid: None }, at(300));
+        m.on_wlan_event(WlanEvent::Connected { bssid: None }, at(800));
+        m.sample(
+            reading(link("00:0b:86:11:22:01", 36, -55), v4_only, 0),
+            SampleReason::Settle,
+            at(1000),
+        );
+        assert!(!out.0.borrow().contains("JOIN TIMING"));
+        m.sample(
+            reading(LinkState::disconnected(), IpState::default(), 0),
+            SampleReason::Poll,
+            at(6000),
+        );
+        let text = out.0.borrow().clone();
+        assert!(
+            text.contains("JOIN TIMING  assoc 300 ms  auth 500 ms  linkup 200 ms  ipv4 200 ms  ipv4Primary 200 ms"),
+            "{text}"
+        );
+        assert!(!m.join_timing.in_progress());
+    }
+
+    /// IPv4-only network: the roam row is written about a second after the
+    /// roam, before the 15 s partial report. It carries the phases known at
+    /// that moment. A roam soon after a join reports the join first.
+    #[test]
+    fn roam_row_carries_partial_timing_on_ipv4_only_network() {
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("roam-row-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut m, out) = monitor(false, false);
+        let mut warnings = Vec::new();
+        m.set_csv(CsvLogger::open(&dir, &at(0), &mut warnings));
+        let roams = || std::fs::read_to_string(dir.join("iairport-roams.csv")).unwrap();
+        let mut v4_only = ip("192.0.2.143", "2001:db8:1::1234");
+        v4_only.ipv6.clear();
+        v4_only.ipv6_router = None;
+
+        m.on_wlan_event(WlanEvent::ConnectionStart, at(0));
+        m.on_wlan_event(WlanEvent::Associated { bssid: None }, at(300));
+        m.on_wlan_event(WlanEvent::Connected { bssid: None }, at(800));
+        m.sample(
+            reading(link("00:0b:86:11:22:01", 36, -55), v4_only.clone(), 0),
+            SampleReason::Settle,
+            at(1000),
+        );
+        // Roam 5 s later, before the join's timing was reported.
+        m.on_wlan_event(WlanEvent::RoamingStart, at(5000));
+        m.on_wlan_event(WlanEvent::Associated { bssid: None }, at(5020));
+        m.on_wlan_event(WlanEvent::Connected { bssid: None }, at(5050));
+        m.sample(
+            reading(link("00:0b:86:11:22:02", 44, -60), v4_only.clone(), 0),
+            SampleReason::Settle,
+            at(5100),
+        );
+        m.sample(
+            reading(link("00:0b:86:11:22:02", 44, -60), v4_only, 0),
+            SampleReason::Poll,
+            at(6200),
+        );
+        let text = out.0.borrow().clone();
+        assert!(
+            text.contains("JOIN TIMING  assoc 300 ms  auth 500 ms  linkup 200 ms  ipv4 200 ms  ipv4Primary 200 ms"),
+            "{text}"
+        );
+        assert!(text.contains("IP after roam  v4 kept  v6 kept"), "{text}");
+        let csv = roams();
+        assert_eq!(csv.lines().count(), 3, "{csv}");
+        let join = csv.lines().nth(1).unwrap();
+        assert!(join.ends_with(",300,500,200,200,,200,"), "{join}");
+        let roam = csv.lines().nth(2).unwrap();
+        assert!(
+            roam.contains(",roam,Corp,00:0b:86:11:22:01,00:0b:86:11:22:02,"),
+            "{roam}"
+        );
+        assert!(roam.ends_with(",20,30,50,50,,50,"), "{roam}");
         m.shutdown(at(30_000));
         let _ = std::fs::remove_dir_all(&dir);
     }
