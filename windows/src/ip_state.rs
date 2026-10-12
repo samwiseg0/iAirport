@@ -25,13 +25,15 @@ impl Ipv6Kind {
 }
 
 /// Address origin as IP Helper reports it. The numbers are NL_PREFIX_ORIGIN,
-/// NL_SUFFIX_ORIGIN and NL_DAD_STATE values.
+/// NL_SUFFIX_ORIGIN and NL_DAD_STATE values. `expired` is PreferredLifetime
+/// == 0. The lifetime itself stays out, it counts down between samples and
+/// would make every IpState compare unequal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Ipv6Origin {
     pub prefix_origin: u32,
     pub suffix_origin: u32,
     pub dad_state: u32,
-    pub preferred_lifetime: u32,
+    pub expired: bool,
 }
 
 pub const PREFIX_ORIGIN_DHCP: u32 = 3;
@@ -64,7 +66,7 @@ impl Ipv6AddressInfo {
             return Ipv6Kind::LinkLocal;
         }
         let o = &self.origin;
-        if o.preferred_lifetime == 0 || o.dad_state == DAD_STATE_DEPRECATED {
+        if o.expired || o.dad_state == DAD_STATE_DEPRECATED {
             return Ipv6Kind::Deprecated;
         }
         if o.suffix_origin == SUFFIX_ORIGIN_RANDOM {
@@ -96,8 +98,9 @@ pub struct IpState {
 }
 
 impl IpState {
+    /// APIPA (169.254/16) means DHCP failed, so it does not count as ready.
     pub fn has_ipv4(&self) -> bool {
-        !self.ipv4.is_empty()
+        self.ipv4.iter().any(|a| !a.starts_with("169.254."))
     }
 
     pub fn has_global_ipv6(&self) -> bool {
@@ -295,7 +298,7 @@ mod tests {
             prefix_origin: 4,
             suffix_origin: 4,
             dad_state: 4,
-            preferred_lifetime: 1000,
+            expired: false,
         }
     }
 
@@ -308,7 +311,7 @@ mod tests {
                 prefix_origin: 2,
                 suffix_origin: 4,
                 dad_state: 4,
-                preferred_lifetime: u32::MAX,
+                expired: false,
             },
         );
         let stable = Ipv6AddressInfo::new("2600::1", Some(64), slaac());
@@ -324,7 +327,7 @@ mod tests {
             "2600::3",
             Some(64),
             Ipv6Origin {
-                preferred_lifetime: 0,
+                expired: true,
                 ..slaac()
             },
         );

@@ -11,7 +11,7 @@ use crate::cli::RunOptions;
 use crate::events::{LogEvent, Severity, WlanEvent};
 use crate::format::{self, time, units, TextColor};
 use crate::ip_state::{self, IpState};
-use crate::join_timing::{JoinTiming, JoinTimingTracker};
+use crate::join_timing::JoinTimingTracker;
 use crate::link::{BssidSource, LinkState, RadioStatus};
 use crate::oui::Oui;
 use crate::output::{
@@ -22,7 +22,7 @@ use crate::session_log::SessionLog;
 use crate::throughput::{CounterSample, CounterTracker};
 use crate::{Date, VERSION};
 
-pub const LOCATION_HINT: &str = "BSS list unavailable (access denied). Windows 11 24H2 and later need Location on for Wi-Fi details: Settings > Privacy & security > Location, turn on Location services and \"Let desktop apps access your location\". Running with connection data only: RSSI shows as Signal %, AP name is blank, bssid_source=connection.";
+pub const LOCATION_HINT: &str = "Wi-Fi details withheld (access denied). Windows 11 24H2 and later need Location on: Settings > Privacy & security > Location, turn on Location services and \"Let desktop apps access your location\". Running in reduced mode: SSID, BSSID, AP name and RSSI in dBm can be blank, bssid_source=connection.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SampleReason {
@@ -53,6 +53,19 @@ struct PendingTransitionIp {
     latest: IpState,
 }
 
+/// A JOIN or RECONNECT row held back until its JOIN TIMING is known. The
+/// poll sees the join before the timing completes, so the row cannot be
+/// written at transition time.
+struct PendingJoinCsv {
+    transition: Transition,
+    source: BssidSource,
+    deadline: Date,
+}
+
+/// Longer than `join_timing::REPORT_AFTER_MS`, so a partial timing still
+/// reaches the row.
+const JOIN_ROW_HOLD_SECS: i64 = 20;
+
 pub struct Monitor<S: Sink> {
     options: RunOptions,
     interface_name: String,
@@ -74,7 +87,7 @@ pub struct Monitor<S: Sink> {
     ip_last_changed_at: Option<Date>,
     pending_roam_ip: Option<PendingRoamIp>,
     pending_roam_csv: PendingRoamCsvBuffer,
-    pending_join_timing: Option<(JoinTiming, Date)>,
+    pending_join_csv: Option<PendingJoinCsv>,
     pending_transition_ip: Option<PendingTransitionIp>,
     dhcp_deadline: Option<Date>,
     dhcpv6_deadline: Option<Date>,
@@ -126,7 +139,7 @@ impl<S: Sink> Monitor<S> {
             ip_last_changed_at: None,
             pending_roam_ip: None,
             pending_roam_csv: PendingRoamCsvBuffer::default(),
-            pending_join_timing: None,
+            pending_join_csv: None,
             pending_transition_ip: None,
             dhcp_deadline: None,
             dhcpv6_deadline: None,
@@ -159,6 +172,11 @@ impl<S: Sink> Monitor<S> {
                 self.write_event(&warning, TextColor::Yellow, "log", None, false, now);
             }
         }
+    }
+
+    #[cfg(test)]
+    fn set_csv(&mut self, csv: CsvLogger) {
+        self.csv = Some(csv);
     }
 
     fn print_header(&mut self, now: Date) {
@@ -226,6 +244,9 @@ impl<S: Sink> Monitor<S> {
         if let Some(d) = self.dhcpv6_deadline {
             candidates.push(d);
         }
+        if let Some(pending) = &self.pending_join_csv {
+            candidates.push(pending.deadline);
+        }
         if self.join_timing.in_progress() {
             candidates.push(self.start_date.max(self.join_timing_deadline()));
         }
@@ -258,6 +279,7 @@ impl<S: Sink> Monitor<S> {
                 reason,
                 reason_text,
             } => {
+                self.join_timing.reset();
                 // WLAN_REASON_CODE namespace. Printed under its own label so
                 // nobody reads it as an 802.11 deauth reason.
                 let line = format!("WLAN DISCONNECTED  reason {reason} {reason_text}");
@@ -283,6 +305,7 @@ impl<S: Sink> Monitor<S> {
                 reason,
                 reason_text,
             } => {
+                self.join_timing.reset();
                 let line = format!("WLAN CONNECT FAILED  reason {reason} {reason_text}");
                 let json = output::event_json(
                     "wlan_reason",
@@ -306,9 +329,15 @@ impl<S: Sink> Monitor<S> {
                 );
                 self.verbose(&line, now);
             }
-            WlanEvent::RoamingStart => self.verbose("wlan roaming start", now),
+            WlanEvent::RoamingStart => {
+                self.join_timing.begin(now);
+                self.verbose("wlan roaming start", now)
+            }
             WlanEvent::RoamingEnd => self.verbose("wlan roaming end", now),
-            WlanEvent::ConnectionStart => self.verbose("wlan connection start", now),
+            WlanEvent::ConnectionStart => {
+                self.join_timing.begin(now);
+                self.verbose("wlan connection start", now)
+            }
             WlanEvent::Other(text) => {
                 let line = format!("wlan {text}");
                 self.verbose(&line, now);
@@ -421,6 +450,7 @@ impl<S: Sink> Monitor<S> {
         self.flush_pending_roam_ip(now);
         self.flush_transition_ip(now);
         self.flush_dhcp(now);
+        self.flush_pending_join_csv_if_due(now);
     }
 
     fn advance_join_timing(&mut self, sample: &Sample, now: Date) {
@@ -456,8 +486,11 @@ impl<S: Sink> Monitor<S> {
             if let Some(row) = self.pending_roam_csv.take() {
                 self.pending_roam_csv
                     .replace(row.transition, Some(timing.clone()));
+            } else if let Some(row) = self.pending_join_csv.take() {
+                if let Some(csv) = self.csv.as_mut() {
+                    csv.write_transition(&row.transition, row.source, Some(&timing), None, None);
+                }
             }
-            self.pending_join_timing = Some((timing, now));
         }
     }
 
@@ -489,11 +522,7 @@ impl<S: Sink> Monitor<S> {
             TransitionKind::Join => {}
         }
         self.update_history(transition, sample);
-        let timing = if transition.kind == TransitionKind::Disconnect {
-            None
-        } else {
-            self.timing_for_transition(transition.at)
-        };
+        self.flush_pending_join_csv();
         let source = sample.link.bssid_source.unwrap_or(self.bssid_source);
         let (line, color) = output::transition_line(transition);
         let json = output::transition_json(transition, source);
@@ -506,7 +535,7 @@ impl<S: Sink> Monitor<S> {
             transition.at,
         );
         if transition.kind == TransitionKind::Roam {
-            if let Some(flushed) = self.pending_roam_csv.replace(transition.clone(), timing) {
+            if let Some(flushed) = self.pending_roam_csv.replace(transition.clone(), None) {
                 if let Some(csv) = self.csv.as_mut() {
                     csv.write_transition(
                         &flushed.transition,
@@ -517,8 +546,16 @@ impl<S: Sink> Monitor<S> {
                     );
                 }
             }
-        } else if let Some(csv) = self.csv.as_mut() {
-            csv.write_transition(transition, source, timing.as_ref(), None, None);
+        } else if transition.kind == TransitionKind::Disconnect {
+            if let Some(csv) = self.csv.as_mut() {
+                csv.write_transition(transition, source, None, None, None);
+            }
+        } else if self.csv.is_some() {
+            self.pending_join_csv = Some(PendingJoinCsv {
+                transition: transition.clone(),
+                source,
+                deadline: transition.at + chrono::Duration::seconds(JOIN_ROW_HOLD_SECS),
+            });
         }
         if let Some(bssid) = transition.to.as_ref().and_then(|t| t.bssid.as_deref()) {
             if let Some(csv) = self.csv.as_mut() {
@@ -707,12 +744,22 @@ impl<S: Sink> Monitor<S> {
         }
     }
 
-    fn timing_for_transition(&mut self, at: Date) -> Option<JoinTiming> {
-        let (timing, when) = self.pending_join_timing.take()?;
-        if time::seconds_between(&at, &when) > 10.0 {
-            return None;
+    fn flush_pending_join_csv(&mut self) {
+        if let Some(row) = self.pending_join_csv.take() {
+            if let Some(csv) = self.csv.as_mut() {
+                csv.write_transition(&row.transition, row.source, None, None, None);
+            }
         }
-        Some(timing)
+    }
+
+    fn flush_pending_join_csv_if_due(&mut self, now: Date) {
+        if self
+            .pending_join_csv
+            .as_ref()
+            .is_some_and(|p| now >= p.deadline)
+        {
+            self.flush_pending_join_csv();
+        }
     }
 
     fn write_event(
@@ -739,6 +786,7 @@ impl<S: Sink> Monitor<S> {
         }
         self.shutting_down = true;
         self.flush_pending_roam_csv_without_ip();
+        self.flush_pending_join_csv();
         if let Some(csv) = self.csv.as_mut() {
             csv.close();
         }
@@ -905,7 +953,7 @@ mod tests {
                     prefix_origin: 4,
                     suffix_origin: 4,
                     dad_state: 4,
-                    preferred_lifetime: 100,
+                    expired: false,
                 },
             )],
             ipv6_router: Some("fe80::1".into()),
@@ -1122,6 +1170,103 @@ mod tests {
     }
 
     #[test]
+    fn join_timing_assoc_starts_at_connection_start() {
+        let (mut m, out) = monitor(false, false);
+        m.on_wlan_event(WlanEvent::ConnectionStart, at(0));
+        // Windows reports associating and associated in the same instant.
+        m.on_wlan_event(WlanEvent::Associating, at(400));
+        m.on_wlan_event(WlanEvent::Associated { bssid: None }, at(400));
+        m.on_wlan_event(WlanEvent::Connected { bssid: None }, at(900));
+        m.sample(
+            reading(
+                link("00:0b:86:11:22:01", 36, -55),
+                ip("192.0.2.143", "2001:db8:1::1234"),
+                0,
+            ),
+            SampleReason::Settle,
+            at(1000),
+        );
+        let text = out.0.borrow().clone();
+        assert!(
+            text.contains("JOIN TIMING  assoc 400 ms  auth 500 ms  linkup 100 ms"),
+            "{text}"
+        );
+    }
+
+    /// The poll prints JOIN before the timing is known. The roams.csv row
+    /// must wait for its own timing and never take the next join's.
+    #[test]
+    fn join_row_waits_for_its_timing() {
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("join-row-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut m, _out) = monitor(false, false);
+        let mut warnings = Vec::new();
+        m.set_csv(CsvLogger::open(&dir, &at(0), &mut warnings));
+        let roams = || std::fs::read_to_string(dir.join("iairport-roams.csv")).unwrap();
+
+        m.on_wlan_event(WlanEvent::ConnectionStart, at(0));
+        m.on_wlan_event(WlanEvent::Associated { bssid: None }, at(300));
+        m.on_wlan_event(WlanEvent::Connected { bssid: None }, at(800));
+        m.sample(
+            reading(link("00:0b:86:11:22:01", 36, -55), IpState::default(), 0),
+            SampleReason::Settle,
+            at(1000),
+        );
+        assert_eq!(roams().lines().count(), 1, "row written before timing");
+        m.sample(
+            reading(
+                link("00:0b:86:11:22:01", 36, -55),
+                ip("192.0.2.143", "2001:db8:1::1234"),
+                0,
+            ),
+            SampleReason::Poll,
+            at(2000),
+        );
+        let text = roams();
+        let row = text.lines().nth(1).unwrap();
+        assert!(row.contains(",join,Corp,,00:0b:86:11:22:01,"), "{row}");
+        assert!(row.ends_with(",300,500,200,1200,1200,1200,1200"), "{row}");
+
+        // Second join with no notifications at all: the row goes out at the
+        // hold deadline with empty timing columns.
+        m.sample(
+            reading(LinkState::disconnected(), IpState::default(), 0),
+            SampleReason::Poll,
+            at(5000),
+        );
+        m.sample(
+            reading(
+                link("00:0b:86:11:22:02", 44, -60),
+                ip("192.0.2.143", "2001:db8:1::1234"),
+                0,
+            ),
+            SampleReason::Poll,
+            at(6000),
+        );
+        assert_eq!(roams().lines().count(), 3, "join row held");
+        m.sample(
+            reading(
+                link("00:0b:86:11:22:02", 44, -60),
+                ip("192.0.2.143", "2001:db8:1::1234"),
+                0,
+            ),
+            SampleReason::Poll,
+            at(6000 + JOIN_ROW_HOLD_SECS * 1000),
+        );
+        let text = roams();
+        assert_eq!(text.lines().count(), 4);
+        let row = text.lines().nth(3).unwrap();
+        assert!(row.contains(",join,Corp,,00:0b:86:11:22:02,"), "{row}");
+        assert!(row.ends_with(",,,,,,,,"), "{row}");
+        m.shutdown(at(30_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn wlan_reason_and_deauth_lines() {
         let (mut m, out) = monitor(false, true);
         m.on_wlan_event(
@@ -1170,7 +1315,7 @@ mod tests {
         m.sample(r.clone(), SampleReason::Startup, at(1000));
         m.sample(r, SampleReason::Poll, at(2000));
         let text = out.0.borrow().clone();
-        assert_eq!(text.matches("BSS list unavailable").count(), 1);
+        assert_eq!(text.matches("Wi-Fi details withheld").count(), 1);
         assert!(text.contains("(Aruba 00:0b:86:11:22:01) Chan 36/80 802.11ax wpa2-enterprise FT (1200 Mbps)  Signal 84%  Speed:"));
         assert!(text.contains("JOIN  00:0b:86:11:22:01  \"Corp\"  ch 36  RSSI \n"));
     }

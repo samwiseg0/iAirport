@@ -180,6 +180,15 @@ impl WlanClient {
         }))
     }
 
+    /// Not gated by Location, so it still answers when the connection query
+    /// returns ERROR_ACCESS_DENIED.
+    pub fn interface_connected(&self, guid: &GUID) -> Option<bool> {
+        let buffer = self.query(guid, wlan_intf_opcode_interface_state).ok()?;
+        buffer
+            .read::<i32>()
+            .map(|state| state == wlan_interface_state_connected)
+    }
+
     pub fn channel_number(&self, guid: &GUID) -> Option<u32> {
         let buffer = self.query(guid, wlan_intf_opcode_channel_number).ok()?;
         buffer.read::<u32>().filter(|c| *c > 0)
@@ -284,6 +293,24 @@ impl WlanClient {
                 ptr::null(),
                 ptr::null_mut(),
             )
+        };
+        // MSM notifications can be refused without Location; ACM alone still
+        // carries connect and disconnect.
+        let code = if code == ERROR_ACCESS_DENIED {
+            // SAFETY: same context pointer and lifetime as above.
+            unsafe {
+                WlanRegisterNotification(
+                    self.handle,
+                    WLAN_NOTIFICATION_SOURCE_ACM,
+                    0,
+                    Some(notification_callback),
+                    raw,
+                    ptr::null(),
+                    ptr::null_mut(),
+                )
+            }
+        } else {
+            code
         };
         if code != ERROR_SUCCESS {
             return Err(code);
@@ -508,6 +535,7 @@ impl LinkReader {
 
     pub fn read(&mut self, client: &WlanClient, now: Date) -> LinkRead {
         if client.radio_on(&self.guid) == Some(false) {
+            self.last_stats = None;
             return LinkRead {
                 state: LinkState::off(),
                 bss_denied: false,
@@ -515,11 +543,32 @@ impl LinkReader {
         }
         let connection = match client.current_connection(&self.guid) {
             Ok(Some(c)) if c.state == wlan_interface_state_connected => c,
+            // Windows 11 24H2 withholds the connection query too when
+            // Location is off. The interface state still says connected.
+            Err(ERROR_ACCESS_DENIED) => {
+                self.last_stats = None;
+                self.bss_denied = true;
+                let state = if client.interface_connected(&self.guid) == Some(true) {
+                    LinkState::associated(LinkSample {
+                        bssid_source: Some(BssidSource::Connection),
+                        rssi_dbm: client.rssi(&self.guid),
+                        channel: client.channel_number(&self.guid),
+                        ..Default::default()
+                    })
+                } else {
+                    LinkState::disconnected()
+                };
+                return LinkRead {
+                    state,
+                    bss_denied: true,
+                };
+            }
             _ => {
+                self.last_stats = None;
                 return LinkRead {
                     state: LinkState::disconnected(),
                     bss_denied: false,
-                }
+                };
             }
         };
         let mut link = LinkSample {
@@ -566,10 +615,11 @@ impl LinkReader {
                 .map(str::to_string);
         }
         if let Some(stats) = client.statistics(&self.guid) {
+            // Drivers reset these counters on reconnect, so a drop reads as 0.
             if let Some(last) = self.last_stats {
-                link.tx_retrans = Some(stats.retry.wrapping_sub(last.retry));
-                link.tx_fail = Some(stats.failed.wrapping_sub(last.failed));
-                link.rx_retry = Some(stats.duplicate.wrapping_sub(last.duplicate));
+                link.tx_retrans = Some(stats.retry.saturating_sub(last.retry));
+                link.tx_fail = Some(stats.failed.saturating_sub(last.failed));
+                link.rx_retry = Some(stats.duplicate.saturating_sub(last.duplicate));
             }
             self.last_stats = Some(stats);
         }

@@ -14,7 +14,9 @@ use windows_sys::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKET_ADDRESS,
 };
 
-use crate::ip_state::{IpState, Ipv6AddressInfo, Ipv6Origin};
+use crate::ip_state::{
+    IpState, Ipv6AddressInfo, Ipv6Origin, DAD_STATE_DEPRECATED, DAD_STATE_PREFERRED,
+};
 use crate::throughput::CounterSample;
 
 #[derive(Clone)]
@@ -64,6 +66,7 @@ pub fn adapter(guid_string: &str) -> Option<AdapterInfo> {
         | GAA_FLAG_SKIP_DNS_SERVER;
     let mut size: u32 = 16 * 1024;
     let mut buffer: Vec<u8> = Vec::new();
+    let mut filled = false;
     for _ in 0..4 {
         buffer.resize(size as usize, 0);
         // SAFETY: the buffer holds `size` bytes; the API writes within it or
@@ -78,10 +81,16 @@ pub fn adapter(guid_string: &str) -> Option<AdapterInfo> {
             )
         };
         match code {
-            ERROR_SUCCESS => break,
+            ERROR_SUCCESS => {
+                filled = true;
+                break;
+            }
             ERROR_BUFFER_OVERFLOW => continue,
             _ => return None,
         }
+    }
+    if !filled {
+        return None;
     }
     let wanted = guid_string.to_ascii_uppercase();
     let mut node = buffer.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
@@ -102,7 +111,13 @@ pub fn adapter(guid_string: &str) -> Option<AdapterInfo> {
                 let mut unicast = item.FirstUnicastAddress;
                 while !unicast.is_null() {
                     let entry = &*unicast;
-                    match decode(&entry.Address) {
+                    // Tentative, duplicate and invalid addresses are not
+                    // usable yet. Deprecated ones stay, the kind shows it.
+                    let usable = matches!(
+                        entry.DadState as u32,
+                        DAD_STATE_DEPRECATED | DAD_STATE_PREFERRED
+                    );
+                    match decode(&entry.Address).filter(|_| usable) {
                         Some(Address::V4(v4)) => {
                             ip.ipv4.push(v4.to_string());
                             ip.ipv4_prefixes.push(Some(entry.OnLinkPrefixLength as u32));
@@ -112,7 +127,7 @@ pub fn adapter(guid_string: &str) -> Option<AdapterInfo> {
                                 prefix_origin: entry.PrefixOrigin as u32,
                                 suffix_origin: entry.SuffixOrigin as u32,
                                 dad_state: entry.DadState as u32,
-                                preferred_lifetime: entry.PreferredLifetime,
+                                expired: entry.PreferredLifetime == 0,
                             };
                             ip.ipv6.push(Ipv6AddressInfo::new(
                                 &v6.to_string(),

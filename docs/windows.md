@@ -4,21 +4,23 @@ The Windows build lives in [`windows/`](../windows/README.md). This page holds t
 
 ## Reduced mode
 
-`WlanGetNetworkBssList` returns `ERROR_ACCESS_DENIED` on Windows 11 24H2 and later when Location is off for desktop apps. The connection query still works, so iairport keeps running with these changes:
+Windows 11 24H2 and later return `ERROR_ACCESS_DENIED` from the Wi-Fi queries when Location is off for desktop apps. Microsoft lists `WlanGetNetworkBssList`, `WlanGetAvailableNetworkList` and the `current_connection` query among them. iairport keeps running with these changes:
 
 - `bssid_source` is `connection` instead of `bss`.
-- RSSI in dBm, channel, band, width, AP name, FT and MFP are blank. The status line prints `Signal NN%` from the driver's signal quality instead of `RSSI -NN`.
-- Security falls back to the auth and cipher algorithm from the connection attributes, so it reads `wpa2-personal` or `wpa3-enterprise` without the `FT` and `MFP` tags.
+- When only the BSS list is refused: RSSI in dBm, channel, band, width, AP name, FT and MFP are blank. The status line prints `Signal NN%` from the driver's signal quality instead of `RSSI -NN`. Security falls back to the auth and cipher algorithm from the connection attributes, so it reads `wpa2-personal` or `wpa3-enterprise` without the `FT` and `MFP` tags.
+- When the connection query is refused too: the interface state still says connected, so the status line shows a connected link with no SSID, BSSID or AP name. RSSI and channel print when the driver answers those opcodes. JOIN and DISCONNECT still print from the interface state. If MSM notifications are refused, ACM notifications alone drive connect and disconnect, and JOIN TIMING has no `assoc` or `auth`.
 - One yellow hint line names the setting to turn on. The hint prints once per run.
 
-Turning Location on while iairport runs is enough. The next BSS list refresh succeeds and the sample switches back to `bss`.
+Turning Location on while iairport runs is enough. The next sample switches back to `bss`.
+
+This mode is written from the Microsoft documentation. It has not been run on a 24H2 machine yet.
 
 ## Which notification drives which line
 
 | Line | Driven by |
 |---|---|
 | `JOIN`, `ROAM`, `RECONNECT`, `DISCONNECT` | The poll compares the BSSID and SSID from the connection query with the last sample. MSM `connected`, `disconnected` and `roaming_end` schedule extra reads at +0, +0.5, +2 and +3 s so the change is seen inside a second. |
-| `JOIN TIMING` | `assoc` is MSM associating to associated. `auth` is associated to connected. `linkup` is MSM connected to the poll seeing interface state connected. `ipv4` and `ipv6` are the time to the first usable address after the join. The line prints when all five are known, or after 15 s with the known parts. |
+| `JOIN TIMING` | `assoc` is ACM connection start (or MSM roaming start) to MSM associated. MSM associating and associated arrive in the same instant on the Intel driver tested, so associating alone would always read 0 ms. `auth` is associated to connected. `linkup` is MSM connected to the poll seeing interface state connected. `ipv4` and `ipv6` are the time to the first usable address after the join. The line prints when all five are known, or after 15 s with the known parts. |
 | `WLAN DISCONNECTED  reason N text` | ACM `disconnected` with its `wlanReasonCode`. The text is from `WlanReasonCodeToString`. These are WLAN_REASON_CODE values, which is why the label differs from `DEAUTH`. |
 | `WLAN CONNECT FAILED  reason N text` | ACM `connection_attempt_fail`. |
 | `DEAUTH  reason N text` | Event Log 8003 when its `Reason` text names a deauthentication or disassociation and carries an 802.11 reason code. The 802.11 table from `ReasonCodes.swift` supplies the text. |
@@ -28,7 +30,9 @@ Turning Location on while iairport runs is enough. The next BSS list refresh suc
 
 ## Join timing on Windows
 
-Windows reports association and 802.1X or PSK completion as separate MSM notifications, so `assoc` and `auth` are measured from the service's own timestamps. `linkup` depends on the poll interval, so with the default 1 s interval it is accurate to about one second. On macOS all five values come from airportd log lines with their own clock.
+Windows reports association and 802.1X or PSK completion as separate MSM notifications, so `assoc` and `auth` are measured from the service's own timestamps. `assoc` starts at the ACM connection start, because the Intel driver tested reports associating and associated together. `linkup` depends on the poll interval, so with the default 1 s interval it is accurate to about one second. On macOS all five values come from airportd log lines with their own clock.
+
+The poll prints `JOIN` before the timing is complete. The `join` and `reconnect` rows in `iairport-roams.csv` wait for their own `JOIN TIMING`, up to 20 s, so the timing columns land on the right row.
 
 ## Event Log IDs used
 
@@ -54,11 +58,11 @@ MCS, NSS, guard interval, noise floor, SNR and CCA have no public wlanapi field.
 
 ## Still unverified
 
-The port was cross-built and unit-tested on macOS. Nobody has yet run it against a live Windows adapter. Expect to check at least these on a real machine, in this order:
+First live run: Windows 11 23H2 (build 22631), Intel Dual Band Wireless-AC 8260, Aruba APs. Checks 1, 5, 8 (via `netsh wlan disconnect` and `connect`), 9 for CSV, and 10 for Ctrl-C passed. The AP name came from the Aruba vendor IE, RSSI from the BSS list, and JOIN TIMING, `IP` lines and the summary printed as documented. The rest is still open:
 
 1. `iairport --help` and an unknown flag (exit 0 and 2).
 2. Connected on Windows 10 or Windows 11 before 24H2: status line with `RSSI`, channel, width, AP name and vendor.
-3. Windows 11 24H2 with Location off: the hint line, `Signal NN%`, `bssid_source=connection`. Turn Location on and watch the next sample switch to `bss`.
+3. Windows 11 24H2 with Location off: the hint line, `bssid_source=connection`, blank or partial link fields. Turn Location on and watch the next sample switch to `bss`.
 4. Roam between two APs of the same SSID: `ROAM` line with dwell, channel change and RSSI change, then `IP after roam`.
 5. Turn Wi-Fi off and on: `DISCONNECT`, then `JOIN` with `JOIN TIMING`.
 6. Power off the current AP: `DISCONNECT`, `WLAN DISCONNECTED  reason N`, and a `DEAUTH` line from Event Log 8003 if the controller sent one.

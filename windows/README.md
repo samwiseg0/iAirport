@@ -78,7 +78,7 @@ Flags: `-v`, `-l`, `-i X`, `--oui PATH`, `--no-color`, `--no-session-log`, `--lo
 | AP name, width, security, FT, MFP | Beacon IEs from the same BSS entry | No, Location on 24H2 |
 | Radio on or off | `WlanQueryInterface` radio state | No |
 | JOIN, ROAM, RECONNECT, DISCONNECT | ACM and MSM notifications plus the poll | No |
-| JOIN TIMING | MSM associating, associated, connected and the first usable address | No |
+| JOIN TIMING | ACM connection start, MSM associated and connected, then the first usable address | No |
 | WLAN reason codes | `WLAN_CONNECTION_NOTIFICATION_DATA` and `WlanReasonCodeToString` | No |
 | 802.11 DEAUTH reasons, 802.1X detail | Event Log `Microsoft-Windows-WLAN-AutoConfig/Operational` | No |
 | DHCP and DHCPv6 changes | Event Log `Microsoft-Windows-Dhcp-Client/Operational` and `Dhcpv6-Client/Operational` | No |

@@ -712,7 +712,7 @@ mod tests {
                     prefix_origin: 4,
                     suffix_origin: 4,
                     dad_state: 4,
-                    preferred_lifetime: 100,
+                    expired: false,
                 },
             )],
             ipv6_router: Some("fe80::1".into()),

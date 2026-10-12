@@ -56,9 +56,12 @@ impl JoinTiming {
 }
 
 /// Builds join timing from wlanapi notification timestamps. On Windows the
-/// phases are: assoc = associating to associated, auth = associated to
-/// connected (MSM), linkup = connected to the first sample whose interface
-/// state is connected, ipv4/ipv6 = connected to the first usable address.
+/// phases are: assoc = ACM connection start (or MSM roaming start) to MSM
+/// associated, auth = associated to connected (MSM), linkup = connected to
+/// the first sample whose interface state is connected, ipv4/ipv6 =
+/// connected to the first usable address. MSM associating and associated
+/// arrive in the same instant on the drivers seen so far, so associating
+/// only starts the clock when no connection start preceded it.
 #[derive(Default)]
 pub struct JoinTimingTracker {
     associating: Option<Date>,
@@ -72,10 +75,18 @@ pub struct JoinTimingTracker {
 pub const REPORT_AFTER_MS: i64 = 15_000;
 
 impl JoinTimingTracker {
-    pub fn associating(&mut self, now: Date) {
+    /// Starts a new join at a connection start or roaming start.
+    pub fn begin(&mut self, now: Date) {
         *self = JoinTimingTracker::default();
         self.associating = Some(now);
         self.timing.start = Some(now);
+    }
+
+    pub fn associating(&mut self, now: Date) {
+        let open = self.associating.is_some() && self.associated.is_none() && !self.reported;
+        if !open {
+            self.begin(now);
+        }
     }
 
     pub fn associated(&mut self, now: Date) {

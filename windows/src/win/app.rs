@@ -26,12 +26,12 @@ pub fn main() -> i32 {
     let options = match cli::parse(&arguments) {
         Ok(o) => o,
         Err(message) => {
-            eprint!("error: {message}\n{}", cli::help_text());
+            eprintln!("error: {message}\n{}", cli::help_text());
             return 2;
         }
     };
     if options.help {
-        print!("{}", cli::help_text());
+        println!("{}", cli::help_text());
         return 0;
     }
 
