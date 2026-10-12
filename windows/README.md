@@ -19,7 +19,7 @@ Every push to master also builds the same zip as a CI artifact on the Actions ta
 
 ## Build
 
-On Windows with a Rust toolchain:
+On Windows with a Rust toolchain (1.85 or later):
 
 ```powershell
 cd windows
