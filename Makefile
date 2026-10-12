@@ -14,7 +14,7 @@ CODESIGN_IDENTITY ?= -
 SWIFT_BUILD_FLAGS ?=
 APPDIR := build/iairport.app
 
-.PHONY: all build bundle icon test install uninstall clean
+.PHONY: all build bundle icon test install uninstall clean windows windows-test
 
 all: bundle
 
@@ -63,3 +63,19 @@ uninstall:
 clean:
 	swift package clean
 	rm -rf build
+
+# Windows port. The Homebrew rustup toolchain has the gnu target and its
+# bin dir must come first so cargo finds the rustup rustc.
+RUSTUP_BIN := /opt/homebrew/opt/rustup/bin
+ifneq ($(wildcard $(RUSTUP_BIN)/cargo),)
+WIN_CARGO ?= PATH="$(RUSTUP_BIN):$$PATH" $(RUSTUP_BIN)/cargo
+else
+WIN_CARGO ?= cargo
+endif
+
+windows:
+	cd windows && $(WIN_CARGO) build --release --target x86_64-pc-windows-gnu
+	@ls -l windows/target/x86_64-pc-windows-gnu/release/iairport.exe
+
+windows-test:
+	cd windows && $(WIN_CARGO) test

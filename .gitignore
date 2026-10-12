@@ -12,3 +12,4 @@ oui.csv.download
 oui.txt.new
 .vscode/
 build/
+windows/target/

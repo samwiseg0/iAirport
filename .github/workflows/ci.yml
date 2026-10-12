@@ -42,3 +42,34 @@ jobs:
         run: |
           build/iairport.app/Contents/MacOS/iairport --help
           codesign --verify --deep --strict build/iairport.app
+
+  windows:
+    name: windows-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          rustup show
+          cargo --version
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Smoke test
+        run: .\target\release\iairport.exe --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iairport-windows-x64
+          path: windows/target/release/iairport.exe

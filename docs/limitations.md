@@ -48,6 +48,6 @@ CoreWLAN event registration succeeded in a plain CLI. The callbacks did not fire
 
 `wdutil info` and `wdutil log` are Apple command output. Their format may change across macOS releases. iairport parses known field names and leaves unknown values blank.
 
-## macOS only
+## Other operating systems
 
-iairport uses CoreWLAN, SCDynamicStore, `wdutil`, `log stream`, and Darwin network counters. Those sources are macOS-only. Other operating systems are outside this tool.
+The Swift tool uses CoreWLAN, SCDynamicStore, `wdutil`, `log stream`, and Darwin network counters. Those sources are macOS-only. A separate Rust port under [`windows/`](../windows/README.md) covers Windows with wlanapi, IP Helper and the Event Log. Linux is outside this tool.
