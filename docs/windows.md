@@ -58,16 +58,21 @@ MCS, NSS, guard interval, noise floor, SNR and CCA have no public wlanapi field.
 
 ## Still unverified
 
-First live run: Windows 11 23H2 (build 22631), Intel Dual Band Wireless-AC 8260, Aruba APs. Checks 1, 5, 8 (via `netsh wlan disconnect` and `connect`), 9 for CSV, and 10 for Ctrl-C passed. The AP name came from the Aruba vendor IE, RSSI from the BSS list, and JOIN TIMING, `IP` lines and the summary printed as documented. The rest is still open:
+Verified on Windows 11 23H2 (build 22631), Intel Dual Band Wireless-AC 8260, Aruba APs:
 
-1. `iairport --help` and an unknown flag (exit 0 and 2).
-2. Connected on Windows 10 or Windows 11 before 24H2: status line with `RSSI`, channel, width, AP name and vendor.
-3. Windows 11 24H2 with Location off: the hint line, `bssid_source=connection`, blank or partial link fields. Turn Location on and watch the next sample switch to `bss`.
-4. Roam between two APs of the same SSID: `ROAM` line with dwell, channel change and RSSI change, then `IP after roam`.
-5. Turn Wi-Fi off and on: `DISCONNECT`, then `JOIN` with `JOIN TIMING`.
-6. Power off the current AP: `DISCONNECT`, `WLAN DISCONNECTED  reason N`, and a `DEAUTH` line from Event Log 8003 if the controller sent one.
-7. Forget and rejoin a WPA2-Enterprise network: 12011 and 12012 in `-v`, and `auth` in `JOIN TIMING`.
-8. Renew the lease (`ipconfig /renew`): `DHCP changed` and an `IP` line.
-9. `-l` and `--json`: CSV headers and JSON keys match `docs/output.md`; the JSON sample carries `signal_pct` next to `rssi_dbm`.
-10. Ctrl-C, Ctrl-Break and closing the window: the summary prints and the session log closes.
-11. Run as a standard user with the Event Log channel locked down by policy: one warning, the monitor keeps running.
+- `--help` exits 0, an unknown flag exits 2.
+- Status line with `RSSI`, channel, width, AP name from the Aruba vendor IE, and vendor.
+- `DISCONNECT` and `JOIN` with `JOIN TIMING` and `IP` lines, via `netsh wlan disconnect` and `connect`.
+- Roam between two APs of the same SSID: `ROAM` with channel and RSSI change, then `IP after roam  v4 kept  v6 kept` one second later. Two roams in a row, 116 to 112 and back.
+- `-l` CSV rows and `--json` objects match `docs/output.md`.
+- Ctrl-C prints the summary and closes the session log.
+
+Still open:
+
+1. Windows 11 24H2 with Location off: the hint line, `bssid_source=connection`, blank or partial link fields. Turn Location on and watch the next sample switch to `bss`.
+2. Turn Wi-Fi off and on: `DISCONNECT`, then `JOIN` with `JOIN TIMING`.
+3. Power off the current AP: `DISCONNECT`, `WLAN DISCONNECTED  reason N`, and a `DEAUTH` line from Event Log 8003 if the controller sent one.
+4. Forget and rejoin a WPA2-Enterprise network: 12011 and 12012 in `-v`, and `auth` in `JOIN TIMING`.
+5. Renew the lease (`ipconfig /renew`): `DHCP changed` and an `IP` line.
+6. Ctrl-Break and closing the window: the summary prints and the session log closes.
+7. Run as a standard user with the Event Log channel locked down by policy: one warning, the monitor keeps running.
